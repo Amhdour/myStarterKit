@@ -1,4 +1,4 @@
-"""Machine-checkable launch-gate readiness evaluator."""
+"""Machine-checkable launch-gate readiness evaluator with reviewer scorecard."""
 
 from __future__ import annotations
 
@@ -9,10 +9,14 @@ from typing import Sequence
 
 from launch_gate.contracts import (
     CONDITIONAL_GO_STATUS,
+    FAIL_CHECK_STATUS,
     GO_STATUS,
+    MISSING_CHECK_STATUS,
     NO_GO_STATUS,
+    PASS_CHECK_STATUS,
     GateCheckResult,
     ReadinessReport,
+    ScorecardCategory,
 )
 from policies.loader import load_policy
 
@@ -30,11 +34,8 @@ class LaunchGateConfig:
     )
     policy_path: str = "policies/bundles/default/policy.json"
     audit_log_path: str = "artifacts/logs/audit.jsonl"
-    eval_summary_glob: str = "artifacts/logs/evals/*.summary.json"
-<<<<<<< HEAD
-=======
     replay_artifact_glob: str = "artifacts/logs/replay*.json"
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+    eval_summary_glob: str = "artifacts/logs/evals/*.summary.json"
     min_eval_pass_rate: float = 0.9
     min_audit_events: int = 5
     required_audit_event_types: Sequence[str] = field(
@@ -42,18 +43,12 @@ class LaunchGateConfig:
             "request.start",
             "request.end",
             "policy.decision",
-<<<<<<< HEAD
-        )
-    )
-    require_fallback_ready: bool = True
-=======
             "retrieval.decision",
             "tool.decision",
         )
     )
     require_fallback_ready: bool = True
     require_replay_artifact: bool = True
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
 
 
 @dataclass
@@ -65,36 +60,35 @@ class SecurityLaunchGate:
         checks = [
             self._check_mandatory_controls(),
             self._check_policy_artifact(),
-<<<<<<< HEAD
-            self._check_audit_minimums(),
-=======
             self._check_retrieval_boundary_config(),
             self._check_tool_router_enforcement_config(),
-            self._check_kill_switch_state(),
-            self._check_audit_minimums(),
-            self._check_replay_artifact(),
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
-            self._check_eval_threshold(),
+            self._check_kill_switch_readiness(),
+            self._check_telemetry_evidence(),
+            self._check_eval_suite_evidence(),
             self._check_fallback_readiness(),
         ]
 
-<<<<<<< HEAD
-        blockers = [check.details for check in checks if not check.passed and check.check_name in {"mandatory_controls", "policy_artifact", "eval_threshold"}]
-        residual_risks = [check.details for check in checks if not check.passed and check.check_name in {"audit_minimums", "fallback_readiness"}]
-=======
+        by_name = {check.check_name: check for check in checks}
+        scorecard = (
+            self._build_scorecard_category("policy_artifacts", ("policy_artifact",), by_name),
+            self._build_scorecard_category("telemetry_evidence", ("telemetry_evidence",), by_name),
+            self._build_scorecard_category("eval_suite_evidence", ("eval_suite_evidence",), by_name),
+            self._build_scorecard_category("fallback_readiness", ("fallback_readiness",), by_name),
+            self._build_scorecard_category("kill_switch_readiness", ("kill_switch_readiness",), by_name),
+        )
+
         blocker_checks = {
             "mandatory_controls",
             "policy_artifact",
             "retrieval_boundary_config",
             "tool_router_enforcement_config",
-            "kill_switch_state",
-            "eval_threshold",
+            "kill_switch_readiness",
+            "eval_suite_evidence",
         }
-        residual_checks = {"audit_minimums", "replay_artifact", "fallback_readiness"}
+        residual_checks = {"telemetry_evidence", "fallback_readiness"}
 
-        blockers = [check.details for check in checks if not check.passed and check.check_name in blocker_checks]
-        residual_risks = [check.details for check in checks if not check.passed and check.check_name in residual_checks]
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+        blockers = [check.details for check in checks if check.check_name in blocker_checks and not check.passed]
+        residual_risks = [check.details for check in checks if check.check_name in residual_checks and not check.passed]
 
         if blockers:
             status = NO_GO_STATUS
@@ -104,15 +98,39 @@ class SecurityLaunchGate:
             status = GO_STATUS
 
         summary = (
-            f"status={status}; passed={sum(1 for c in checks if c.passed)}/{len(checks)}; "
+            f"status={status}; checks_passed={sum(1 for c in checks if c.passed)}/{len(checks)}; "
+            f"scorecard={', '.join(f'{item.category_name}:{item.status}' for item in scorecard)}; "
             f"blockers={len(blockers)}; residual_risks={len(residual_risks)}"
         )
         return ReadinessReport(
             status=status,
             checks=tuple(checks),
+            scorecard=scorecard,
             blockers=tuple(blockers),
             residual_risks=tuple(residual_risks),
             summary=summary,
+        )
+
+    def _build_scorecard_category(
+        self,
+        category_name: str,
+        check_names: Sequence[str],
+        checks_by_name: dict[str, GateCheckResult],
+    ) -> ScorecardCategory:
+        resolved = [checks_by_name[name] for name in check_names]
+        if any(item.status == MISSING_CHECK_STATUS for item in resolved):
+            status = MISSING_CHECK_STATUS
+        elif any(item.status == FAIL_CHECK_STATUS for item in resolved):
+            status = FAIL_CHECK_STATUS
+        else:
+            status = PASS_CHECK_STATUS
+
+        return ScorecardCategory(
+            category_name=category_name,
+            status=status,
+            check_names=tuple(check_names),
+            details="; ".join(item.details for item in resolved),
+            evidence={name: dict(checks_by_name[name].evidence) for name in check_names},
         )
 
     def _check_mandatory_controls(self) -> GateCheckResult:
@@ -121,6 +139,7 @@ class SecurityLaunchGate:
         details = "all mandatory controls present" if passed else f"missing mandatory controls: {', '.join(missing)}"
         return GateCheckResult(
             check_name="mandatory_controls",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
             passed=passed,
             details=details,
             evidence={"required": list(self.config.mandatory_control_files), "missing": missing},
@@ -129,18 +148,26 @@ class SecurityLaunchGate:
     def _check_policy_artifact(self) -> GateCheckResult:
         policy_path = self.repo_root / self.config.policy_path
         runtime_policy = load_policy(policy_path, environment="production")
-        passed = policy_path.is_file() and runtime_policy.valid
-        details = "policy artifact valid" if passed else "missing or invalid policy artifact"
+
+        if not policy_path.is_file():
+            return GateCheckResult(
+                check_name="policy_artifact",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="policy artifact missing",
+                evidence={"policy_path": str(policy_path), "policy_exists": False},
+            )
+
+        passed = runtime_policy.valid
+        details = "policy artifact valid" if passed else "policy artifact invalid"
         return GateCheckResult(
             check_name="policy_artifact",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
             passed=passed,
             details=details,
-<<<<<<< HEAD
-            evidence={"policy_path": str(policy_path), "policy_valid": runtime_policy.valid},
-=======
             evidence={
                 "policy_path": str(policy_path),
-                "policy_exists": policy_path.is_file(),
+                "policy_exists": True,
                 "policy_valid": runtime_policy.valid,
                 "validation_errors": list(runtime_policy.validation_errors),
             },
@@ -149,10 +176,10 @@ class SecurityLaunchGate:
     def _check_retrieval_boundary_config(self) -> GateCheckResult:
         policy_path = self.repo_root / self.config.policy_path
         runtime_policy = load_policy(policy_path, environment="production")
-
         if not runtime_policy.valid:
             return GateCheckResult(
                 check_name="retrieval_boundary_config",
+                status=FAIL_CHECK_STATUS,
                 passed=False,
                 details="retrieval boundary config invalid: policy artifact invalid",
                 evidence={"policy_path": str(policy_path), "policy_valid": runtime_policy.valid},
@@ -180,6 +207,7 @@ class SecurityLaunchGate:
         )
         return GateCheckResult(
             check_name="retrieval_boundary_config",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
             passed=passed,
             details=details,
             evidence={
@@ -196,10 +224,10 @@ class SecurityLaunchGate:
     def _check_tool_router_enforcement_config(self) -> GateCheckResult:
         policy_path = self.repo_root / self.config.policy_path
         runtime_policy = load_policy(policy_path, environment="production")
-
         if not runtime_policy.valid:
             return GateCheckResult(
                 check_name="tool_router_enforcement_config",
+                status=FAIL_CHECK_STATUS,
                 passed=False,
                 details="tool-router enforcement config invalid: policy artifact invalid",
                 evidence={"policy_path": str(policy_path), "policy_valid": runtime_policy.valid},
@@ -217,6 +245,7 @@ class SecurityLaunchGate:
         )
         return GateCheckResult(
             check_name="tool_router_enforcement_config",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
             passed=passed,
             details=details,
             evidence={
@@ -228,14 +257,24 @@ class SecurityLaunchGate:
             },
         )
 
-    def _check_kill_switch_state(self) -> GateCheckResult:
+    def _check_kill_switch_readiness(self) -> GateCheckResult:
         policy_path = self.repo_root / self.config.policy_path
         runtime_policy = load_policy(policy_path, environment="production")
+
+        if not policy_path.is_file():
+            return GateCheckResult(
+                check_name="kill_switch_readiness",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="kill-switch readiness missing: policy artifact missing",
+                evidence={"policy_path": str(policy_path), "policy_exists": False},
+            )
 
         passed = runtime_policy.valid and (not runtime_policy.kill_switch)
         details = "kill switch disabled for production" if passed else "kill switch enabled or policy invalid for production"
         return GateCheckResult(
-            check_name="kill_switch_state",
+            check_name="kill_switch_readiness",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
             passed=passed,
             details=details,
             evidence={
@@ -243,133 +282,91 @@ class SecurityLaunchGate:
                 "policy_valid": runtime_policy.valid,
                 "kill_switch": runtime_policy.kill_switch,
             },
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
         )
 
-    def _check_audit_minimums(self) -> GateCheckResult:
+    def _check_telemetry_evidence(self) -> GateCheckResult:
         audit_path = self.repo_root / self.config.audit_log_path
+        replay_files = sorted(self.repo_root.glob(self.config.replay_artifact_glob))
         if not audit_path.is_file():
             return GateCheckResult(
-                check_name="audit_minimums",
+                check_name="telemetry_evidence",
+                status=MISSING_CHECK_STATUS,
                 passed=False,
-                details="audit evidence missing",
-<<<<<<< HEAD
-                evidence={"audit_path": str(audit_path)},
-=======
-                evidence={"audit_path": str(audit_path), "audit_exists": False},
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+                details="telemetry evidence missing: audit log missing",
+                evidence={"audit_path": str(audit_path), "audit_exists": False, "replay_files": [str(p) for p in replay_files]},
             )
 
         records = _read_jsonl(audit_path)
         event_types = [record.get("event_type") for record in records if isinstance(record, dict)]
         missing_types = [item for item in self.config.required_audit_event_types if item not in event_types]
 
-        passed = len(records) >= self.config.min_audit_events and not missing_types
-        details = "audit minimums satisfied" if passed else "audit minimums not satisfied"
+        if self.config.require_replay_artifact and not replay_files:
+            return GateCheckResult(
+                check_name="telemetry_evidence",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="telemetry evidence missing: replay artifact missing",
+                evidence={
+                    "audit_path": str(audit_path),
+                    "audit_exists": True,
+                    "event_count": len(records),
+                    "missing_event_types": missing_types,
+                    "replay_files": [],
+                },
+            )
+
+        passed = len(records) >= self.config.min_audit_events and len(missing_types) == 0
+        details = "telemetry evidence satisfied" if passed else "telemetry evidence incomplete"
         return GateCheckResult(
-            check_name="audit_minimums",
+            check_name="telemetry_evidence",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
             passed=passed,
             details=details,
             evidence={
-<<<<<<< HEAD
-                "event_count": len(records),
-                "required_min": self.config.min_audit_events,
-                "missing_event_types": missing_types,
-                "audit_path": str(audit_path),
-=======
                 "audit_path": str(audit_path),
                 "audit_exists": True,
                 "event_count": len(records),
                 "required_min": self.config.min_audit_events,
                 "missing_event_types": missing_types,
+                "replay_files": [str(p) for p in replay_files],
             },
         )
 
-    def _check_replay_artifact(self) -> GateCheckResult:
-        replay_files = sorted(self.repo_root.glob(self.config.replay_artifact_glob))
-        if not self.config.require_replay_artifact:
-            return GateCheckResult(
-                check_name="replay_artifact",
-                passed=True,
-                details="replay artifact check not required",
-                evidence={"glob": self.config.replay_artifact_glob, "matched_files": [str(p) for p in replay_files]},
-            )
-
-        if not replay_files:
-            return GateCheckResult(
-                check_name="replay_artifact",
-                passed=False,
-                details="replay artifact missing",
-                evidence={"glob": self.config.replay_artifact_glob, "matched_files": []},
-            )
-
-        latest = replay_files[-1]
-        try:
-            replay = json.loads(latest.read_text())
-        except (OSError, json.JSONDecodeError):
-            return GateCheckResult(
-                check_name="replay_artifact",
-                passed=False,
-                details="replay artifact unreadable",
-                evidence={"replay_path": str(latest)},
-            )
-
-        has_timeline = isinstance(replay, dict) and isinstance(replay.get("timeline"), list) and len(replay.get("timeline", [])) > 0
-        passed = bool(has_timeline)
-        details = "replay artifact satisfied" if passed else "replay artifact missing timeline evidence"
-        return GateCheckResult(
-            check_name="replay_artifact",
-            passed=passed,
-            details=details,
-            evidence={
-                "replay_path": str(latest),
-                "has_timeline": has_timeline,
-                "timeline_length": len(replay.get("timeline", [])) if isinstance(replay, dict) else 0,
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
-            },
-        )
-
-    def _check_eval_threshold(self) -> GateCheckResult:
-<<<<<<< HEAD
-        summary_files = sorted((self.repo_root).glob(self.config.eval_summary_glob))
-=======
+    def _check_eval_suite_evidence(self) -> GateCheckResult:
         summary_files = sorted(self.repo_root.glob(self.config.eval_summary_glob))
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
         if not summary_files:
             return GateCheckResult(
-                check_name="eval_threshold",
+                check_name="eval_suite_evidence",
+                status=MISSING_CHECK_STATUS,
                 passed=False,
-                details="eval summary evidence missing",
-                evidence={"glob": self.config.eval_summary_glob},
+                details="eval suite evidence missing",
+                evidence={"glob": self.config.eval_summary_glob, "matched_files": []},
             )
 
         latest = summary_files[-1]
-        try:
-            summary = json.loads(latest.read_text())
-        except (OSError, json.JSONDecodeError):
+        summary = _read_json_file(latest)
+        if summary is None:
             return GateCheckResult(
-                check_name="eval_threshold",
+                check_name="eval_suite_evidence",
+                status=MISSING_CHECK_STATUS,
                 passed=False,
-                details="eval summary unreadable",
+                details="eval suite evidence unreadable",
                 evidence={"summary_path": str(latest)},
             )
 
-        total = int(summary.get("total", 0))
-        passed_count = int(summary.get("passed_count", 0))
-        pass_rate = (passed_count / total) if total else 0.0
+        total = int(summary.get("total", 0)) if isinstance(summary.get("total", 0), int) else 0
+        passed_count = int(summary.get("passed_count", 0)) if isinstance(summary.get("passed_count", 0), int) else 0
+        pass_rate = (passed_count / total) if total > 0 else 0.0
 
-<<<<<<< HEAD
-        passed = pass_rate >= self.config.min_eval_pass_rate and total > 0
-=======
-        outcomes = summary.get("outcomes", {})
-        fail_count = int(outcomes.get("fail", 0)) if isinstance(outcomes, dict) else 0
-        inconclusive_count = int(outcomes.get("inconclusive", 0)) if isinstance(outcomes, dict) else 0
+        outcomes = summary.get("outcomes", {}) if isinstance(summary.get("outcomes"), dict) else {}
+        fail_count = int(outcomes.get("fail", 0)) if isinstance(outcomes.get("fail", 0), int) else 0
+        inconclusive_count = int(outcomes.get("inconclusive", 0)) if isinstance(outcomes.get("inconclusive", 0), int) else 0
 
-        passed = pass_rate >= self.config.min_eval_pass_rate and total > 0 and fail_count == 0 and inconclusive_count == 0
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
-        details = "eval threshold satisfied" if passed else "eval threshold failed"
+        passed = total > 0 and pass_rate >= self.config.min_eval_pass_rate and fail_count == 0 and inconclusive_count == 0
+        details = "eval suite evidence satisfied" if passed else "eval suite evidence failed threshold/outcome health"
         return GateCheckResult(
-            check_name="eval_threshold",
+            check_name="eval_suite_evidence",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
             passed=passed,
             details=details,
             evidence={
@@ -377,13 +374,9 @@ class SecurityLaunchGate:
                 "total": total,
                 "passed_count": passed_count,
                 "pass_rate": pass_rate,
-                "required_pass_rate": self.config.min_eval_pass_rate,
-<<<<<<< HEAD
-=======
-                "outcomes": outcomes if isinstance(outcomes, dict) else {},
-                "fail_count": fail_count,
-                "inconclusive_count": inconclusive_count,
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+                "required_min_pass_rate": self.config.min_eval_pass_rate,
+                "fail": fail_count,
+                "inconclusive": inconclusive_count,
             },
         )
 
@@ -391,34 +384,37 @@ class SecurityLaunchGate:
         policy_path = self.repo_root / self.config.policy_path
         runtime_policy = load_policy(policy_path, environment="production")
 
-<<<<<<< HEAD
-=======
-        if not runtime_policy.valid:
+        if not self.config.require_fallback_ready:
             return GateCheckResult(
                 check_name="fallback_readiness",
-                passed=False,
-                details="fallback readiness not satisfied: policy invalid",
-                evidence={
-                    "policy_path": str(policy_path),
-                    "policy_valid": runtime_policy.valid,
-                },
+                status=PASS_CHECK_STATUS,
+                passed=True,
+                details="fallback readiness check not required",
+                evidence={"required": False},
             )
 
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
-        fallback_enabled = bool(runtime_policy.fallback_to_rag)
-        high_risk = runtime_policy.risk_tiers.get("high")
-        high_risk_tools_disabled = bool(high_risk and not high_risk.tools_enabled)
+        if not policy_path.is_file():
+            return GateCheckResult(
+                check_name="fallback_readiness",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="fallback readiness missing: policy artifact missing",
+                evidence={"policy_path": str(policy_path), "policy_exists": False},
+            )
 
-        passed = (not self.config.require_fallback_ready) or (fallback_enabled and high_risk_tools_disabled)
+        passed = runtime_policy.valid and runtime_policy.fallback_to_rag
         details = "fallback readiness satisfied" if passed else "fallback readiness not satisfied"
+        if not runtime_policy.valid:
+            details = "fallback readiness not satisfied: policy invalid"
         return GateCheckResult(
             check_name="fallback_readiness",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
             passed=passed,
             details=details,
             evidence={
-                "fallback_enabled": fallback_enabled,
-                "high_risk_tools_disabled": high_risk_tools_disabled,
-                "require_fallback_ready": self.config.require_fallback_ready,
+                "policy_path": str(policy_path),
+                "policy_valid": runtime_policy.valid,
+                "fallback_to_rag": runtime_policy.fallback_to_rag,
             },
         )
 
@@ -426,22 +422,59 @@ class SecurityLaunchGate:
 def _read_jsonl(path: Path) -> list[dict]:
     records: list[dict] = []
     try:
-        raw = path.read_text()
-    except OSError:
-        return records
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
             parsed = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            records.append(parsed)
+            if isinstance(parsed, dict):
+                records.append(parsed)
+    except (OSError, json.JSONDecodeError):
+        return []
     return records
 
 
-if __name__ == "__main__":
+def _read_json_file(path: Path) -> dict | None:
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _as_dict(report: ReadinessReport) -> dict[str, object]:
+    return {
+        "status": report.status,
+        "summary": report.summary,
+        "blockers": list(report.blockers),
+        "residual_risks": list(report.residual_risks),
+        "scorecard": [
+            {
+                "category_name": item.category_name,
+                "status": item.status,
+                "details": item.details,
+                "check_names": list(item.check_names),
+                "evidence": dict(item.evidence),
+            }
+            for item in report.scorecard
+        ],
+        "checks": [
+            {
+                "check_name": check.check_name,
+                "status": check.status,
+                "passed": check.passed,
+                "details": check.details,
+                "evidence": dict(check.evidence),
+            }
+            for check in report.checks
+        ],
+    }
+
+
+def main() -> None:
     report = SecurityLaunchGate(repo_root=Path(".")).evaluate()
-    print(report.summary)
+    print(json.dumps(_as_dict(report), indent=2, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()

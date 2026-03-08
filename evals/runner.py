@@ -16,6 +16,16 @@ from evals.contracts import (
 )
 from evals.runtime import build_runtime_fixture, make_invocation, make_request
 from evals.scenario import SecurityScenario, load_scenarios
+from telemetry.audit import (
+    POLICY_DECISION_EVENT,
+    REQUEST_END_EVENT,
+    REQUEST_START_EVENT,
+    RETRIEVAL_DECISION_EVENT,
+    TOOL_DECISION_EVENT,
+    build_replay_artifact,
+    validate_replay_completeness,
+    write_replay_artifact,
+)
 
 
 @dataclass
@@ -24,7 +34,13 @@ class SecurityEvalRunner:
 
     def run(self, scenario_file: str | Path, *, output_dir: str | Path = "artifacts/logs/evals") -> EvalResult:
         scenarios = load_scenarios(scenario_file)
-        scenario_results = tuple(self._run_scenario(scenario) for scenario in scenarios)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        eval_output_dir = Path(output_dir)
+        replay_output_dir = eval_output_dir.parent / "replay"
+        scenario_results = tuple(
+            self._run_scenario(scenario, replay_output_dir=replay_output_dir, stamp=stamp)
+            for scenario in scenarios
+        )
 
         outcome_counts = {
             PASS_OUTCOME: sum(1 for item in scenario_results if item.outcome == PASS_OUTCOME),
@@ -47,10 +63,10 @@ class SecurityEvalRunner:
             scenario_results=scenario_results,
         )
 
-        self._write_outputs(eval_result, output_dir=Path(output_dir), outcome_counts=outcome_counts)
+        self._write_outputs(eval_result, output_dir=eval_output_dir, outcome_counts=outcome_counts, stamp=stamp)
         return eval_result
 
-    def _run_scenario(self, scenario: SecurityScenario) -> EvalScenarioResult:
+    def _run_scenario(self, scenario: SecurityScenario, *, replay_output_dir: Path, stamp: str) -> EvalScenarioResult:
         evidence: dict[str, object] = {
             "operation": scenario.operation,
             "label": scenario.label,
@@ -76,7 +92,15 @@ class SecurityEvalRunner:
                         "tool_decision_statuses": [decision.status for decision in response.tool_decisions],
                         "event_types": event_types,
                         "retrieved_document_ids": list(response.trace.retrieved_document_ids),
+                        "decision_log": _extract_decision_log(fixture.audit_sink.events),
                     }
+                )
+                self._append_replay_evidence(
+                    evidence=evidence,
+                    scenario_id=scenario.scenario_id,
+                    replay_output_dir=replay_output_dir,
+                    stamp=stamp,
+                    events=fixture.audit_sink.events,
                 )
 
             elif scenario.operation == "tool_invocation":
@@ -89,7 +113,20 @@ class SecurityEvalRunner:
                     confirmed=bool(scenario.invocation.get("confirmed", False)),
                 )
                 decision = fixture.tool_router.route(invocation)
-                evidence.update({"tool_decision_status": decision.status, "tool_decision_reason": decision.reason})
+                evidence.update(
+                    {
+                        "tool_decision_status": decision.status,
+                        "tool_decision_reason": decision.reason,
+                        "decision_log": {
+                            "tool_decision": {
+                                "status": decision.status,
+                                "tool_name": decision.tool_name,
+                                "action": decision.action,
+                                "reason": decision.reason,
+                            }
+                        },
+                    }
+                )
 
             elif scenario.operation == "audit_verification":
                 request = make_request(
@@ -99,10 +136,24 @@ class SecurityEvalRunner:
                 )
                 _ = fixture.orchestrator.run(request)
                 event_types = [event.event_type for event in fixture.audit_sink.events]
-                evidence.update({"event_types": event_types, "event_count": len(event_types)})
+                evidence.update(
+                    {
+                        "event_types": event_types,
+                        "event_count": len(event_types),
+                        "decision_log": _extract_decision_log(fixture.audit_sink.events),
+                    }
+                )
+                self._append_replay_evidence(
+                    evidence=evidence,
+                    scenario_id=scenario.scenario_id,
+                    replay_output_dir=replay_output_dir,
+                    stamp=stamp,
+                    events=fixture.audit_sink.events,
+                )
 
             checks_passed, details = _evaluate_expectations(dict(scenario.expectations), evidence)
             outcome = _classify_outcome(checks_passed=checks_passed, expectations=dict(scenario.expectations), evidence=evidence)
+            evidence["scenario_summary"] = f"outcome={outcome}; checks={'pass' if checks_passed else 'fail'}; details={details}"
             return EvalScenarioResult(
                 scenario_id=scenario.scenario_id,
                 title=scenario.title,
@@ -124,9 +175,8 @@ class SecurityEvalRunner:
                 evidence=evidence,
             )
 
-    def _write_outputs(self, result: EvalResult, *, output_dir: Path, outcome_counts: dict[str, int]) -> None:
+    def _write_outputs(self, result: EvalResult, *, output_dir: Path, outcome_counts: dict[str, int], stamp: str) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         jsonl_path = output_dir / f"{self.suite_name}-{stamp}.jsonl"
         summary_path = output_dir / f"{self.suite_name}-{stamp}.summary.json"
 
@@ -163,6 +213,40 @@ class SecurityEvalRunner:
             )
         )
 
+    def _append_replay_evidence(
+        self,
+        *,
+        evidence: dict[str, object],
+        scenario_id: str,
+        replay_output_dir: Path,
+        stamp: str,
+        events,
+    ) -> None:
+        if not events:
+            return
+
+        artifact = build_replay_artifact(events)
+        replay_path = replay_output_dir / f"{self.suite_name}-{stamp}-{scenario_id}.replay.json"
+        write_replay_artifact(artifact, replay_path)
+
+        required = (
+            REQUEST_START_EVENT,
+            REQUEST_END_EVENT,
+            POLICY_DECISION_EVENT,
+            RETRIEVAL_DECISION_EVENT,
+            TOOL_DECISION_EVENT,
+        )
+        complete, missing = validate_replay_completeness(artifact, required_event_types=required)
+        evidence.update(
+            {
+                "replay_artifact_path": str(replay_path),
+                "replay_event_type_counts": dict(artifact.event_type_counts),
+                "replay_coverage": dict(artifact.coverage),
+                "replay_required_events_complete": complete,
+                "replay_missing_required_events": list(missing),
+            }
+        )
+
 
 def _classify_outcome(*, checks_passed: bool, expectations: dict, evidence: dict) -> str:
     if checks_passed:
@@ -173,6 +257,58 @@ def _classify_outcome(*, checks_passed: bool, expectations: dict, evidence: dict
     if bool(expectations.get("expected_fail", False)):
         return EXPECTED_FAIL_OUTCOME
     return FAIL_OUTCOME
+
+
+def _extract_decision_log(events) -> dict[str, object]:
+    policy_decisions = []
+    retrieval_decisions = []
+    tool_decisions = []
+    deny_events = []
+    fallback_events = []
+
+    for event in events:
+        payload = dict(event.event_payload)
+        if event.event_type == "policy.decision":
+            policy_decisions.append(
+                {
+                    "action": payload.get("action"),
+                    "allow": payload.get("allow"),
+                    "reason": payload.get("reason"),
+                }
+            )
+        elif event.event_type == "retrieval.decision":
+            retrieval_decisions.append(
+                {
+                    "document_count": payload.get("document_count"),
+                    "top_k": payload.get("top_k"),
+                    "allowed_source_ids": payload.get("allowed_source_ids"),
+                }
+            )
+        elif event.event_type == "tool.decision":
+            tool_decisions.append({"decisions": payload.get("decisions", [])})
+        elif event.event_type == "deny.event":
+            deny_events.append(
+                {
+                    "stage": payload.get("stage"),
+                    "tool_name": payload.get("tool_name"),
+                    "reason": payload.get("reason"),
+                }
+            )
+        elif event.event_type == "fallback.event":
+            fallback_events.append(
+                {
+                    "mode": payload.get("mode"),
+                    "reason": payload.get("reason"),
+                }
+            )
+
+    return {
+        "policy_decisions": policy_decisions,
+        "retrieval_decisions": retrieval_decisions,
+        "tool_decisions": tool_decisions,
+        "deny_events": deny_events,
+        "fallback_events": fallback_events,
+    }
 
 
 def _evaluate_expectations(expectations: dict, evidence: dict) -> tuple[bool, str]:
