@@ -1,6 +1,6 @@
 """Secure retrieval service with tenant/source boundary enforcement."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Sequence
 
 from policies.contracts import PolicyEngine
@@ -31,7 +31,22 @@ class SecureRetrievalService(Retriever):
         if not query.tenant_id or not query.query_text.strip() or query.top_k <= 0:
             return tuple()
 
-        effective_allowed_sources = tuple(query.allowed_source_ids)
+        requested_sources = tuple(source_id for source_id in query.allowed_source_ids if isinstance(source_id, str) and source_id)
+        if len(requested_sources) == 0:
+            return tuple()
+
+        tenant_registered_sources = {
+            source.source_id
+            for source in self.source_registry.list_for_tenant(query.tenant_id)
+            if self._is_valid_registered_source(source)
+        }
+        if len(tenant_registered_sources) == 0:
+            return tuple()
+
+        if any(source_id not in tenant_registered_sources for source_id in requested_sources):
+            return tuple()
+
+        effective_allowed_sources = tuple(requested_sources)
         effective_top_k = query.top_k
         require_trust_metadata = True
         require_provenance = True
@@ -56,7 +71,9 @@ class SecureRetrievalService(Retriever):
 
             constrained_set = {source for source in constrained_sources if isinstance(source, str) and source}
             if query.allowed_source_ids:
-                effective_allowed_sources = tuple(source for source in query.allowed_source_ids if source in constrained_set)
+                if any(source not in constrained_set for source in requested_sources):
+                    return tuple()
+                effective_allowed_sources = tuple(source for source in requested_sources if source in constrained_set)
             else:
                 effective_allowed_sources = tuple(constrained_set)
             if len(effective_allowed_sources) == 0:
@@ -112,7 +129,7 @@ class SecureRetrievalService(Retriever):
                 continue
             if not self._passes_filter_hooks(query=effective_query, document=document, source=source):
                 continue
-            accepted.append(document)
+            accepted.append(self._attach_provenance(document=document, source=source))
             if len(accepted) >= effective_query.top_k:
                 break
 
@@ -120,6 +137,8 @@ class SecureRetrievalService(Retriever):
 
     def _is_valid_registered_source(self, source: SourceRegistration) -> bool:
         if not source.source_id or not source.tenant_id:
+            return False
+        if not source.display_name or not source.display_name.strip():
             return False
         if not source.trust_domain or not source.trust_domain.strip():
             return False
@@ -154,13 +173,19 @@ class SecureRetrievalService(Retriever):
 
     def _has_valid_provenance(self, document: RetrievalDocument) -> bool:
         provenance = document.provenance
-        if not provenance.citation_id:
+        if not provenance.citation_id or not provenance.citation_id.strip():
             return False
-        if not provenance.document_uri or not provenance.chunk_id:
+        if not provenance.document_uri or not provenance.document_uri.strip() or not provenance.chunk_id or not provenance.chunk_id.strip():
             return False
         if provenance.source_id != document.trust.source_id:
             return False
         return True
+
+    def _attach_provenance(self, document: RetrievalDocument, source: SourceRegistration) -> RetrievalDocument:
+        return replace(
+            document,
+            provenance=replace(document.provenance, source_id=source.source_id),
+        )
 
     def _passes_filter_hooks(
         self,

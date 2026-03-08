@@ -7,12 +7,14 @@ This guide focuses on practical local setup and validation for the starter kit.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env
 ```
 
-## 2) Baseline Validation
+## 2) Minimal Local Config + Validation
 ```bash
-pytest
+cp config/settings.template.yaml config/settings.local.yaml
+cp config/logging.template.yaml config/logging.local.yaml
+mkdir -p artifacts/logs/evals artifacts/logs/replay
+pytest -q
 ./scripts/check_scaffold.sh
 ```
 
@@ -23,6 +25,7 @@ python -m evals.runner
 Expected outputs:
 - `artifacts/logs/evals/*.jsonl`
 - `artifacts/logs/evals/*.summary.json`
+- `artifacts/logs/replay/*.replay.json`
 
 ## 4) Launch Readiness Evaluation
 ```bash

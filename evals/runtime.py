@@ -101,9 +101,30 @@ def build_runtime_fixture(policy_overrides: Mapping[str, object] | None = None) 
     )
 
     tool_registry = InMemoryToolRegistry()
-    tool_registry.register(ToolDescriptor(name="ticket_lookup", description="Lookup ticket", allowed=True, rate_limit_per_minute=3))
-    tool_registry.register(ToolDescriptor(name="account_update", description="Update account", allowed=True, confirmation_required=True))
-    tool_registry.register(ToolDescriptor(name="admin_shell", description="Privileged shell", allowed=True))
+    tool_registry.register(
+        ToolDescriptor(name="ticket_lookup", description="Lookup ticket", allowed=True, rate_limit_per_minute=3),
+        executor=lambda invocation: {
+            "status": "ok",
+            "tool": invocation.tool_name,
+            "action": invocation.action,
+            "ticket_id": invocation.arguments.get("ticket_id", "unknown"),
+        },
+    )
+    tool_registry.register(
+        ToolDescriptor(name="account_update", description="Update account", allowed=True, confirmation_required=True),
+        executor=lambda invocation: {
+            "status": "updated",
+            "tool": invocation.tool_name,
+            "action": invocation.action,
+        },
+    )
+    tool_registry.register(
+        ToolDescriptor(name="admin_shell", description="Privileged shell", allowed=True),
+        executor=lambda invocation: {
+            "status": "executed",
+            "command": invocation.arguments.get("command", ""),
+        },
+    )
 
     audit_sink = InMemoryAuditSink()
     tool_router = SecureToolRouter(registry=tool_registry, rate_limiter=InMemoryToolRateLimiter(), policy_engine=engine)

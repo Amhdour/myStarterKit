@@ -79,23 +79,26 @@ Not included:
    python -m venv .venv
    source .venv/bin/activate
    pip install -r requirements-dev.txt
-   cp .env.example .env
    ```
-2. **Minimal validation**
+2. **Minimal config**
+   ```bash
+   cp config/settings.template.yaml config/settings.local.yaml
+   cp config/logging.template.yaml config/logging.local.yaml
+   mkdir -p artifacts/logs/evals artifacts/logs/replay
+   ```
+3. **Startup/validation commands**
    ```bash
    pytest -q
-   ```
-3. **Run baseline evals (writes evidence artifacts)**
-   ```bash
    python -m evals.runner
-   ls -1 artifacts/logs/evals
-   ```
-4. **Run launch gate (reads policy + audit/eval evidence)**
-   ```bash
    python -m launch_gate.engine
    ```
+4. **Inspect generated evidence**
+   - Eval scenario logs: `artifacts/logs/evals/*.jsonl`
+   - Eval summaries: `artifacts/logs/evals/*.summary.json`
+   - Replay artifacts: `artifacts/logs/replay/*.replay.json`
+   - Audit logs (if JSONL sink is wired in your runtime entrypoint): `artifacts/logs/audit.jsonl`
 
-### Minimal request-flow demo
+### Demo walkthrough
 
 > Uses repository runtime fixture wiring (`evals/runtime.py`) so reviewers can exercise real orchestrator/policy/retrieval/tool paths quickly.
 
@@ -113,14 +116,6 @@ python -c "from evals.runtime import build_runtime_fixture, make_invocation; f=b
 ```bash
 python -c "from pathlib import Path; from launch_gate.engine import SecurityLaunchGate; report=SecurityLaunchGate(repo_root=Path('.')).evaluate(); print('status:', report.status); print('summary:', report.summary); [print(f'- {c.check_name}:', 'PASS' if c.passed else 'FAIL') for c in report.checks]"
 ```
-
-### Where to inspect evidence
-
-- Eval scenario logs: `artifacts/logs/evals/*.jsonl`
-- Eval summaries: `artifacts/logs/evals/*.summary.json`
-- Audit logs (if JSONL sink is wired in your runtime entrypoint): `artifacts/logs/audit.jsonl`
-- Replay artifacts (if generated): `artifacts/logs/replay*.json`
-- Launch-gate policy input: `policies/bundles/default/policy.json`
 
 ## Development Principles
 
@@ -141,7 +136,7 @@ python -c "from pathlib import Path; from launch_gate.engine import SecurityLaun
 - Architecture deep-dive: `docs/architecture.md`
 - Architecture diagrams: `docs/architecture_diagrams.md`
 - Deployment architecture: `docs/deployment_architecture.md`
-- Trust boundaries: `docs/trust_boundaries.md`
+- Trust boundaries (boundary-by-boundary crossings, controls, and required logging): `docs/trust_boundaries.md`
 - Threat model: `docs/threat_model.md`
 - Operator/developer setup: `docs/operator/setup.md`
 - Security reviewer guide: `docs/reviewer/security_review_guide.md`

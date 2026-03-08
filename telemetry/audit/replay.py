@@ -39,6 +39,7 @@ class ReplayArtifact:
     timeline: tuple[dict, ...]
     event_type_counts: Mapping[str, int] = field(default_factory=dict)
     coverage: Mapping[str, bool] = field(default_factory=dict)
+    decision_summary: Mapping[str, object] = field(default_factory=dict)
 
 
 def build_replay_artifact(events: Sequence[AuditEvent]) -> ReplayArtifact:
@@ -75,6 +76,7 @@ def build_replay_artifact(events: Sequence[AuditEvent]) -> ReplayArtifact:
         timeline=tuple(timeline),
         event_type_counts=event_type_counts,
         coverage=coverage,
+        decision_summary=_build_decision_summary(ordered),
     )
 
 
@@ -99,9 +101,78 @@ def write_replay_artifact(artifact: ReplayArtifact, output_path: Path) -> None:
                 "tenant_id": artifact.tenant_id,
                 "event_type_counts": dict(artifact.event_type_counts),
                 "coverage": dict(artifact.coverage),
+                "decision_summary": dict(artifact.decision_summary),
                 "timeline": list(artifact.timeline),
             },
             sort_keys=True,
             indent=2,
         )
     )
+
+
+def _build_decision_summary(events: Sequence[AuditEvent]) -> Mapping[str, object]:
+    policy_decisions: list[dict[str, object]] = []
+    retrieval_decisions: list[dict[str, object]] = []
+    tool_decisions: list[dict[str, object]] = []
+    deny_events: list[dict[str, object]] = []
+    fallback_events: list[dict[str, object]] = []
+
+    request_start = False
+    request_end = False
+
+    for event in events:
+        payload = dict(event.event_payload)
+        if event.event_type == REQUEST_START_EVENT:
+            request_start = True
+        elif event.event_type == REQUEST_END_EVENT:
+            request_end = True
+        elif event.event_type == POLICY_DECISION_EVENT:
+            policy_decisions.append(
+                {
+                    "action": payload.get("action"),
+                    "allow": payload.get("allow"),
+                    "reason": payload.get("reason"),
+                    "risk_tier": payload.get("risk_tier"),
+                }
+            )
+        elif event.event_type == RETRIEVAL_DECISION_EVENT:
+            retrieval_decisions.append(
+                {
+                    "document_count": payload.get("document_count"),
+                    "top_k": payload.get("top_k"),
+                    "allowed_source_ids": payload.get("allowed_source_ids"),
+                }
+            )
+        elif event.event_type == TOOL_DECISION_EVENT:
+            tool_decisions.append(
+                {
+                    "decisions": payload.get("decisions", []),
+                }
+            )
+        elif event.event_type == DENY_EVENT:
+            deny_events.append(
+                {
+                    "stage": payload.get("stage"),
+                    "tool_name": payload.get("tool_name"),
+                    "reason": payload.get("reason"),
+                }
+            )
+        elif event.event_type == FALLBACK_EVENT:
+            fallback_events.append(
+                {
+                    "mode": payload.get("mode"),
+                    "reason": payload.get("reason"),
+                }
+            )
+
+    return {
+        "request_lifecycle": {
+            "start_seen": request_start,
+            "end_seen": request_end,
+        },
+        "policy_decisions": policy_decisions,
+        "retrieval_decisions": retrieval_decisions,
+        "tool_decisions": tool_decisions,
+        "deny_events": deny_events,
+        "fallback_events": fallback_events,
+    }

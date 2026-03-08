@@ -166,6 +166,9 @@ def test_replay_artifact_completeness(tmp_path) -> None:
     assert parsed["coverage"]["request.start"] is True
     assert parsed["coverage"]["request.end"] is True
     assert parsed["event_type_counts"]["request.start"] == 1
+    assert parsed["decision_summary"]["request_lifecycle"]["start_seen"] is True
+    assert parsed["decision_summary"]["request_lifecycle"]["end_seen"] is True
+    assert parsed["decision_summary"]["policy_decisions"] == []
     assert len(parsed["timeline"]) == 2
     assert parsed["timeline"][0]["event_type"] == REQUEST_START_EVENT
     assert parsed["timeline"][1]["event_type"] == REQUEST_END_EVENT
@@ -192,3 +195,39 @@ def test_replay_completeness_validation_reports_missing_events() -> None:
 
     assert complete is False
     assert missing == (REQUEST_END_EVENT,)
+
+
+def test_replay_artifact_decision_summary_includes_policy_retrieval_tool_deny_fallback() -> None:
+    sink = InMemoryAuditSink()
+    trace_id = "trace-2"
+    request_id = "req-2"
+    for event_type, payload in (
+        (REQUEST_START_EVENT, {"session_id": "s2"}),
+        ("policy.decision", {"action": "retrieval.search", "allow": True, "reason": "ok", "risk_tier": "low"}),
+        ("retrieval.decision", {"document_count": 1, "top_k": 1, "allowed_source_ids": ["kb-main"]}),
+        ("tool.decision", {"decisions": ["deny"]}),
+        (DENY_EVENT, {"stage": "tool.route", "tool_name": "ticket_lookup", "reason": "denied"}),
+        ("fallback.event", {"mode": "rag_only", "reason": "tools disabled"}),
+        (REQUEST_END_EVENT, {"status": "ok"}),
+    ):
+        sink.emit(
+            create_audit_event(
+                trace_id=trace_id,
+                request_id=request_id,
+                actor_id="actor-1",
+                tenant_id="tenant-a",
+                event_type=event_type,
+                payload=payload,
+            )
+        )
+
+    artifact = build_replay_artifact(sink.events)
+
+    summary = artifact.decision_summary
+    assert summary["request_lifecycle"]["start_seen"] is True
+    assert summary["request_lifecycle"]["end_seen"] is True
+    assert summary["policy_decisions"][0]["action"] == "retrieval.search"
+    assert summary["retrieval_decisions"][0]["document_count"] == 1
+    assert summary["tool_decisions"][0]["decisions"] == ["deny"]
+    assert summary["deny_events"][0]["stage"] == "tool.route"
+    assert summary["fallback_events"][0]["mode"] == "rag_only"

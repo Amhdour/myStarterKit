@@ -56,6 +56,31 @@ def test_direct_registry_execution_is_blocked_loudly() -> None:
         registry.execute(_invocation(tool_name="ticket_lookup"), execution_secret=object())
 
 
+def test_registry_execution_with_router_secret_still_fails_outside_router_context() -> None:
+    registry = InMemoryToolRegistry()
+    registry.register(
+        ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True),
+        executor=lambda _: {"ok": True},
+    )
+    router = SecureToolRouter(registry=registry, rate_limiter=InMemoryToolRateLimiter())
+
+    with pytest.raises(DirectToolExecutionDeniedError):
+        registry.execute(_invocation(tool_name="ticket_lookup"), execution_secret=router._execution_secret)
+
+
+def test_direct_executor_invocation_from_registry_internals_is_blocked() -> None:
+    registry = InMemoryToolRegistry()
+    registry.register(
+        ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True),
+        executor=lambda _: {"ok": True},
+    )
+    _ = SecureToolRouter(registry=registry, rate_limiter=InMemoryToolRateLimiter())
+
+    executor = registry._executors["ticket_lookup"]
+
+    with pytest.raises(DirectToolExecutionDeniedError):
+        executor(_invocation(tool_name="ticket_lookup"))
+
 def test_forbidden_tool_denial() -> None:
     router = _router_with_tool(
         ToolDescriptor(name="ticket_lookup", description="lookup", allowed=False)

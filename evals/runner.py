@@ -72,6 +72,7 @@ class SecurityEvalRunner:
             "label": scenario.label,
             "execution_path": scenario.execution_path,
             "limitation_reason": scenario.limitation_reason,
+            "mocked": scenario.label in {"mock", "mocked", "simulated"},
         }
 
         try:
@@ -103,7 +104,7 @@ class SecurityEvalRunner:
                     events=fixture.audit_sink.events,
                 )
 
-            elif scenario.operation == "tool_invocation":
+            elif scenario.operation in {"tool_invocation", "tool_execution"}:
                 invocation = make_invocation(
                     request_id=scenario.invocation.get("request_id", scenario.scenario_id),
                     tenant_id=scenario.invocation.get("tenant_id", "tenant-a"),
@@ -112,11 +113,19 @@ class SecurityEvalRunner:
                     arguments=scenario.invocation.get("arguments", {}),
                     confirmed=bool(scenario.invocation.get("confirmed", False)),
                 )
-                decision = fixture.tool_router.route(invocation)
+
+                if scenario.operation == "tool_execution":
+                    decision, execution_result = fixture.tool_router.mediate_and_execute(invocation)
+                else:
+                    decision = fixture.tool_router.route(invocation)
+                    execution_result = None
+
                 evidence.update(
                     {
                         "tool_decision_status": decision.status,
                         "tool_decision_reason": decision.reason,
+                        "execution_performed": execution_result is not None,
+                        "execution_result": execution_result,
                         "decision_log": {
                             "tool_decision": {
                                 "status": decision.status,
@@ -242,6 +251,8 @@ class SecurityEvalRunner:
                 "replay_artifact_path": str(replay_path),
                 "replay_event_type_counts": dict(artifact.event_type_counts),
                 "replay_coverage": dict(artifact.coverage),
+                "replay_decision_summary": dict(artifact.decision_summary),
+                "replay_required_events": list(required),
                 "replay_required_events_complete": complete,
                 "replay_missing_required_events": list(missing),
             }
@@ -332,6 +343,19 @@ def _evaluate_expectations(expectations: dict, evidence: dict) -> tuple[bool, st
     if "answer_not_contains" in expectations:
         expected = str(expectations["answer_not_contains"])
         checks.append((expected not in str(evidence.get("answer_text", "")), f"answer contains forbidden text: {expected}"))
+
+    if "execution_performed" in expectations:
+        checks.append(
+            (
+                bool(evidence.get("execution_performed", False)) == bool(expectations["execution_performed"]),
+                f"expected execution_performed={bool(expectations['execution_performed'])}",
+            )
+        )
+
+    if "execution_result_status" in expectations:
+        expected = str(expectations["execution_result_status"])
+        actual = str((evidence.get("execution_result") or {}).get("status", ""))
+        checks.append((actual == expected, f"expected execution result status {expected}"))
 
     required_events = expectations.get("required_events", [])
     if isinstance(required_events, list):

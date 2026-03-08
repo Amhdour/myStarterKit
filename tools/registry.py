@@ -10,6 +10,7 @@ from tools.contracts import (
     ToolInvocation,
     ToolRegistry,
 )
+from tools.execution_guard import current_router_execution_secret
 
 
 @dataclass
@@ -23,7 +24,7 @@ class InMemoryToolRegistry(ToolRegistry):
     def register(self, tool: ToolDescriptor, executor: ToolExecutor | None = None) -> None:
         self._tools[tool.name] = tool
         if executor is not None:
-            self._executors[tool.name] = executor
+            self._executors[tool.name] = self._wrap_executor(tool_name=tool.name, executor=executor)
 
     def get(self, tool_name: str) -> ToolDescriptor | None:
         return self._tools.get(tool_name)
@@ -35,7 +36,12 @@ class InMemoryToolRegistry(ToolRegistry):
         self._execution_secret = secret
 
     def execute(self, invocation: ToolInvocation, execution_secret: object) -> Mapping[str, object]:
-        if self._execution_secret is None or execution_secret is not self._execution_secret:
+        router_context_secret = current_router_execution_secret()
+        if (
+            self._execution_secret is None
+            or execution_secret is not self._execution_secret
+            or router_context_secret is not self._execution_secret
+        ):
             raise DirectToolExecutionDeniedError(
                 "direct tool execution is blocked: use SecureToolRouter.mediate_and_execute"
             )
@@ -47,3 +53,18 @@ class InMemoryToolRegistry(ToolRegistry):
             )
 
         return executor(invocation)
+
+    def _wrap_executor(self, *, tool_name: str, executor: ToolExecutor) -> ToolExecutor:
+        def _guarded_executor(invocation: ToolInvocation) -> Mapping[str, object]:
+            if current_router_execution_secret() is not self._execution_secret:
+                raise DirectToolExecutionDeniedError(
+                    "direct tool execution is blocked: use SecureToolRouter.mediate_and_execute"
+                )
+            if invocation.tool_name != tool_name:
+                raise DirectToolExecutionDeniedError(
+                    f"tool executor mismatch: expected '{tool_name}', got '{invocation.tool_name}'"
+                )
+            return executor(invocation)
+
+        return _guarded_executor
+
