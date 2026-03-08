@@ -53,6 +53,9 @@ class SecureToolRouter:
         if not self._valid_arguments(invocation.arguments):
             return self._deny(invocation, "tool arguments failed validation")
 
+        if self.policy_engine is None:
+            return self._deny(invocation, "policy engine unavailable")
+
         if self.policy_engine is not None:
             try:
                 policy_decision = self.policy_engine.evaluate(

@@ -132,6 +132,10 @@ class SupportAgentOrchestrator:
             tool_decisions: tuple[ToolDecision, ...] = tuple()
             if tool_policy_decision.allow:
                 allowlisted = list(self.tool_registry.list_allowlisted())
+                policy_allowed_tools = tool_policy_decision.constraints.get("allowed_tools")
+                if isinstance(policy_allowed_tools, list):
+                    policy_allowed_set = {name for name in policy_allowed_tools if isinstance(name, str) and name}
+                    allowlisted = [tool for tool in allowlisted if tool.name in policy_allowed_set]
 
                 tool_decisions = tuple(
                     self.tool_router.route(

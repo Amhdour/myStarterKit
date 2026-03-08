@@ -2,18 +2,23 @@
 
 Evidence-driven release-readiness checks for secure support-agent launches.
 
-Current checks validate concrete artifacts and outputs:
-- Mandatory control files are present.
-- Policy artifact exists, is readable JSON, and validates.
+The launch gate verifies launch status using **real artifacts**, not inferred assumptions:
+- Policy artifact exists, parses, and validates.
 - Retrieval boundary configuration is explicit (tenant/source allowlists + trust/provenance enforcement).
-- Tool-router enforcement is evidenced by required eval scenario outcomes.
-- Telemetry audit output exists and contains required event coverage.
-- Replay artifacts exist (when required) and contain required event counts.
-- Eval summary output exists and meets threshold + outcome-health constraints.
-- Fallback readiness is validated in policy and confirmed by fallback eval evidence.
+- Tool-router enforcement is evidenced by required eval scenario outcomes from an aligned eval summary+jsonl run.
+- Telemetry evidence exists in audit logs with required event types and lifecycle identity fields.
+- Replay evidence (when required) exists, has valid replay schema, and request lifecycle coverage.
+- Eval summary thresholds are met and match the underlying jsonl scenario records.
+- Fallback readiness is validated in policy and confirmed by fallback eval scenario evidence.
 - Kill-switch readiness confirms production kill-switch is disabled.
 
-Readiness outputs:
+Status semantics:
 - `go`: no blockers and no residual risks.
 - `conditional_go`: no blockers, but residual risks remain.
 - `no_go`: one or more blocker checks failed.
+
+Run:
+
+```bash
+python -m launch_gate.engine
+```

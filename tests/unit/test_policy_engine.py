@@ -249,3 +249,38 @@ def test_fallback_to_rag_activation() -> None:
     assert response.status == "ok"
     assert response.tool_decisions == ()
     assert any(event.event_type == "fallback.event" for event in audit.events)
+
+
+def test_missing_policy_loaded_into_runtime_denies_retrieval_and_tools(tmp_path) -> None:
+    runtime_policy = load_policy(tmp_path / "missing-policy.json", environment="development")
+    engine = RuntimePolicyEngine(policy=runtime_policy)
+
+    retrieval_decision = engine.evaluate("req-missing", "retrieval.search", {"tenant_id": "tenant-a"})
+    tool_decision = engine.evaluate(
+        "req-missing",
+        "tools.invoke",
+        {"tenant_id": "tenant-a", "tool_name": "ticket_lookup", "action": "lookup", "arguments": {}},
+    )
+
+    assert retrieval_decision.allow is False
+    assert tool_decision.allow is False
+    assert "invalid policy" in retrieval_decision.reason
+
+
+def test_invalid_policy_loaded_into_runtime_denies_retrieval_and_tools(tmp_path) -> None:
+    invalid_file = tmp_path / "invalid-policy.json"
+    invalid_file.write_text("{not-json")
+
+    runtime_policy = load_policy(invalid_file, environment="development")
+    engine = RuntimePolicyEngine(policy=runtime_policy)
+
+    retrieval_decision = engine.evaluate("req-invalid", "retrieval.search", {"tenant_id": "tenant-a"})
+    tool_decision = engine.evaluate(
+        "req-invalid",
+        "tools.invoke",
+        {"tenant_id": "tenant-a", "tool_name": "ticket_lookup", "action": "lookup", "arguments": {}},
+    )
+
+    assert retrieval_decision.allow is False
+    assert tool_decision.allow is False
+    assert "invalid policy" in retrieval_decision.reason

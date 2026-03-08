@@ -89,6 +89,43 @@ class FakeToolRouter:
         )
 
 
+
+
+class FakeTwoToolRegistry:
+    def list_allowlisted(self):
+        return (
+            ToolDescriptor(name="ticket_lookup", description="Lookup ticket metadata", allowed=True),
+            ToolDescriptor(name="admin_shell", description="Admin shell", allowed=True),
+        )
+
+
+class PolicyLimitedToolListEngine(FakePolicyEngine):
+    def evaluate(self, request_id: str, action: str, context: dict) -> PolicyDecision:
+        self.calls.append(action)
+        if action == "tools.route":
+            return PolicyDecision(
+                request_id=request_id,
+                allow=True,
+                reason="tools allowed",
+                constraints={"allowed_tools": ["ticket_lookup"]},
+            )
+        return PolicyDecision(request_id=request_id, allow=True, reason="allowed")
+
+
+class RecordingToolRouter:
+    def __init__(self) -> None:
+        self.routed_tools: list[str] = []
+
+    def route(self, invocation):
+        self.routed_tools.append(invocation.tool_name)
+        return ToolDecision(
+            status="allow",
+            tool_name=invocation.tool_name,
+            action=invocation.action,
+            reason="allowed",
+            sanitized_arguments=invocation.arguments,
+        )
+
 class FakeAuditSink:
     def __init__(self) -> None:
         self.events = []
@@ -266,3 +303,25 @@ def test_orchestration_activates_fallback_to_rag_when_tools_route_denied_with_fa
     assert response.tool_decisions == ()
     event_types = [event.event_type for event in audit.events]
     assert "fallback.event" in event_types
+
+
+def test_orchestration_limits_tool_candidates_to_policy_allowed_tools() -> None:
+    policy = PolicyLimitedToolListEngine()
+    model = FakeModel()
+    router = RecordingToolRouter()
+    audit = FakeAuditSink()
+
+    orchestrator = SupportAgentOrchestrator(
+        policy_engine=policy,
+        retriever=FakeRetriever(),
+        model=model,
+        tool_registry=FakeTwoToolRegistry(),
+        tool_router=router,
+        audit_sink=audit,
+    )
+
+    response = orchestrator.run(_build_request())
+
+    assert response.status == "ok"
+    assert router.routed_tools == ["ticket_lookup"]
+

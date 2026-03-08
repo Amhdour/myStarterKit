@@ -27,6 +27,16 @@ REPLAY_EVENT_COVERAGE_KEYS = (
     FALLBACK_EVENT,
 )
 
+SENSITIVE_FIELD_NAMES = {
+    "password",
+    "raw_password",
+    "token",
+    "access_token",
+    "api_key",
+    "secret",
+    "ssn",
+}
+
 
 @dataclass(frozen=True)
 class ReplayArtifact:
@@ -54,7 +64,7 @@ def build_replay_artifact(events: Sequence[AuditEvent]) -> ReplayArtifact:
         raise ValueError(f"replay artifact requires single trace; found {len(trace_ids)} distinct trace_ids")
 
     event_type_counts: dict[str, int] = {}
-    timeline = []
+    timeline: list[dict[str, object]] = []
     for event in ordered:
         event_type_counts[event.event_type] = event_type_counts.get(event.event_type, 0) + 1
         timeline.append(
@@ -62,11 +72,12 @@ def build_replay_artifact(events: Sequence[AuditEvent]) -> ReplayArtifact:
                 "event_id": event.event_id,
                 "event_type": event.event_type,
                 "created_at": event.created_at,
-                "payload": dict(event.event_payload),
+                "payload": _sanitize_payload(event.event_payload),
             }
         )
 
-    coverage = {event_type: (event_type_counts.get(event_type, 0) > 0) for event_type in REPLAY_EVENT_COVERAGE_KEYS}
+    decision_summary = _build_decision_summary(ordered)
+    coverage = _build_coverage(event_type_counts=event_type_counts, decision_summary=decision_summary)
 
     return ReplayArtifact(
         trace_id=first.trace_id,
@@ -76,7 +87,7 @@ def build_replay_artifact(events: Sequence[AuditEvent]) -> ReplayArtifact:
         timeline=tuple(timeline),
         event_type_counts=event_type_counts,
         coverage=coverage,
-        decision_summary=_build_decision_summary(ordered),
+        decision_summary=decision_summary,
     )
 
 
@@ -110,6 +121,35 @@ def write_replay_artifact(artifact: ReplayArtifact, output_path: Path) -> None:
     )
 
 
+def _sanitize_payload(payload: Mapping[str, object]) -> dict[str, object]:
+    sanitized: dict[str, object] = {}
+    for key, value in payload.items():
+        if key.lower() in SENSITIVE_FIELD_NAMES:
+            sanitized[key] = "[redacted]"
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def _build_coverage(*, event_type_counts: Mapping[str, int], decision_summary: Mapping[str, object]) -> dict[str, bool]:
+    coverage = {event_type: (event_type_counts.get(event_type, 0) > 0) for event_type in REPLAY_EVENT_COVERAGE_KEYS}
+    lifecycle = decision_summary.get("request_lifecycle", {})
+    coverage["request_lifecycle_complete"] = bool(
+        isinstance(lifecycle, dict) and lifecycle.get("start_seen") and lifecycle.get("end_seen")
+    )
+    coverage["decision_replay_core_complete"] = all(
+        coverage.get(event_type, False)
+        for event_type in (
+            REQUEST_START_EVENT,
+            REQUEST_END_EVENT,
+            POLICY_DECISION_EVENT,
+            RETRIEVAL_DECISION_EVENT,
+            TOOL_DECISION_EVENT,
+        )
+    )
+    return coverage
+
+
 def _build_decision_summary(events: Sequence[AuditEvent]) -> Mapping[str, object]:
     policy_decisions: list[dict[str, object]] = []
     retrieval_decisions: list[dict[str, object]] = []
@@ -121,7 +161,7 @@ def _build_decision_summary(events: Sequence[AuditEvent]) -> Mapping[str, object
     request_end = False
 
     for event in events:
-        payload = dict(event.event_payload)
+        payload = _sanitize_payload(event.event_payload)
         if event.event_type == REQUEST_START_EVENT:
             request_start = True
         elif event.event_type == REQUEST_END_EVENT:

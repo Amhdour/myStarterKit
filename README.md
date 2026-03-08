@@ -8,6 +8,7 @@ A production-oriented repository scaffold for building a **secure support agent*
 ## Security Guarantees
 
 - See `docs/security_guarantees.md` for implementation-aligned security invariants, enforcement points, evidence mappings, and residual risks.
+- See `docs/trust_boundaries.md` for boundary-by-boundary crossings, risks, controls, and required audit events.
 
 ## Purpose
 
@@ -140,5 +141,6 @@ python -c "from pathlib import Path; from launch_gate.engine import SecurityLaun
 - Threat model: `docs/threat_model.md`
 - Operator/developer setup: `docs/operator/setup.md`
 - Security reviewer guide: `docs/reviewer/security_review_guide.md`
+- Reviewer trust pack (quick credibility walkthrough): `docs/reviewer_guide.md`
 - Portfolio summary: `docs/portfolio/project_summary.md`
 - Evidence pack index: `docs/evidence_pack/README.md`
