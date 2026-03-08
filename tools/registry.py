@@ -10,7 +10,11 @@ from tools.contracts import (
     ToolInvocation,
     ToolRegistry,
 )
-from tools.execution_guard import current_router_execution_secret
+from tools.execution_guard import (
+    assert_registry_execute_callsite,
+    assert_wrapped_executor_callsite,
+    current_router_execution_secret,
+)
 
 
 @dataclass
@@ -32,10 +36,14 @@ class InMemoryToolRegistry(ToolRegistry):
     def list_allowlisted(self):
         return tuple(tool for tool in self._tools.values() if tool.allowed)
 
+    def list_registered(self):
+        return tuple(self._tools.values())
+
     def bind_execution_secret(self, secret: object) -> None:
         self._execution_secret = secret
 
     def execute(self, invocation: ToolInvocation, execution_secret: object) -> Mapping[str, object]:
+        assert_registry_execute_callsite()
         router_context_secret = current_router_execution_secret()
         if (
             self._execution_secret is None
@@ -56,6 +64,7 @@ class InMemoryToolRegistry(ToolRegistry):
 
     def _wrap_executor(self, *, tool_name: str, executor: ToolExecutor) -> ToolExecutor:
         def _guarded_executor(invocation: ToolInvocation) -> Mapping[str, object]:
+            assert_wrapped_executor_callsite()
             if current_router_execution_secret() is not self._execution_secret:
                 raise DirectToolExecutionDeniedError(
                     "direct tool execution is blocked: use SecureToolRouter.mediate_and_execute"
@@ -67,4 +76,3 @@ class InMemoryToolRegistry(ToolRegistry):
             return executor(invocation)
 
         return _guarded_executor
-

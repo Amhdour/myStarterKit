@@ -11,6 +11,14 @@ _ROUTER_EXECUTION_CONTEXT: ContextVar[object | None] = ContextVar(
 )
 
 
+def _frame_details(frame) -> tuple[object | None, str | None, str | None]:
+    module_name = frame.f_globals.get("__name__") if frame is not None else None
+    function_name = frame.f_code.co_name if frame is not None else None
+    caller_self = frame.f_locals.get("self") if frame is not None else None
+    class_name = type(caller_self).__name__ if caller_self is not None else None
+    return module_name, function_name, class_name
+
+
 def _assert_router_mediation_callsite() -> None:
     frame = inspect.currentframe()
     if frame is None or frame.f_back is None or frame.f_back.f_back is None:
@@ -18,12 +26,7 @@ def _assert_router_mediation_callsite() -> None:
             "direct tool execution is blocked: execution context can only be opened by SecureToolRouter.mediate_and_execute"
         )
 
-    caller = frame.f_back.f_back
-    caller_module = caller.f_globals.get("__name__")
-    caller_name = caller.f_code.co_name
-    caller_self = caller.f_locals.get("self")
-    caller_class = type(caller_self).__name__ if caller_self is not None else None
-
+    caller_module, caller_name, caller_class = _frame_details(frame.f_back.f_back)
     if not (
         caller_module == "tools.router"
         and caller_name == "mediate_and_execute"
@@ -31,6 +34,46 @@ def _assert_router_mediation_callsite() -> None:
     ):
         raise DirectToolExecutionDeniedError(
             "direct tool execution is blocked: execution context can only be opened by SecureToolRouter.mediate_and_execute"
+        )
+
+
+def assert_registry_execute_callsite() -> None:
+    """Allow registry execution only when called from the centralized router."""
+
+    frame = inspect.currentframe()
+    if frame is None or frame.f_back is None or frame.f_back.f_back is None:
+        raise DirectToolExecutionDeniedError(
+            "direct tool execution is blocked: registry execution can only be invoked by SecureToolRouter.mediate_and_execute"
+        )
+
+    caller_module, caller_name, caller_class = _frame_details(frame.f_back.f_back)
+    if not (
+        caller_module == "tools.router"
+        and caller_name == "mediate_and_execute"
+        and caller_class == "SecureToolRouter"
+    ):
+        raise DirectToolExecutionDeniedError(
+            "direct tool execution is blocked: registry execution can only be invoked by SecureToolRouter.mediate_and_execute"
+        )
+
+
+def assert_wrapped_executor_callsite() -> None:
+    """Allow wrapped executors to run only through the registry execute path."""
+
+    frame = inspect.currentframe()
+    if frame is None or frame.f_back is None or frame.f_back.f_back is None:
+        raise DirectToolExecutionDeniedError(
+            "direct tool execution is blocked: executor can only be invoked by InMemoryToolRegistry.execute"
+        )
+
+    caller_module, caller_name, caller_class = _frame_details(frame.f_back.f_back)
+    if not (
+        caller_module == "tools.registry"
+        and caller_name == "execute"
+        and caller_class == "InMemoryToolRegistry"
+    ):
+        raise DirectToolExecutionDeniedError(
+            "direct tool execution is blocked: executor can only be invoked by InMemoryToolRegistry.execute"
         )
 
 

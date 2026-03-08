@@ -24,6 +24,7 @@ class InvariantVerificationResult:
     missing_code_paths: tuple[str, ...]
     missing_test_paths: tuple[str, ...]
     missing_evidence_globs: tuple[str, ...]
+    matched_evidence_paths: tuple[str, ...]
 
 
 def run_security_guarantees_verification(
@@ -36,6 +37,19 @@ def run_security_guarantees_verification(
     invariants = payload.get("invariants", []) if isinstance(payload, dict) else []
     results: list[InvariantVerificationResult] = []
 
+    seen_ids: set[str] = set()
+    duplicate_ids: set[str] = set()
+    if isinstance(invariants, list):
+        for item in invariants:
+            if not isinstance(item, dict):
+                continue
+            invariant_id = str(item.get("id", ""))
+            if not invariant_id:
+                continue
+            if invariant_id in seen_ids:
+                duplicate_ids.add(invariant_id)
+            seen_ids.add(invariant_id)
+
     for item in invariants:
         invariant_id = str(item.get("id", ""))
         enforcement_locations = tuple(path for path in item.get("enforcement_locations", []) if isinstance(path, str))
@@ -46,17 +60,24 @@ def run_security_guarantees_verification(
         missing_test_paths = tuple(path for path in test_coverage if not (repo_root / path).is_file())
 
         missing_evidence_globs: list[str] = []
+        matched_evidence_paths: list[str] = []
         evidence_present = True
         for pattern in artifact_evidence:
-            if not list(repo_root.glob(pattern)):
+            matches = sorted(str(path) for path in repo_root.glob(pattern))
+            if not matches:
                 evidence_present = False
                 missing_evidence_globs.append(pattern)
+            else:
+                matched_evidence_paths.extend(matches)
 
         code_mapped = bool(enforcement_locations) and len(missing_code_paths) == 0
         tests_mapped = bool(test_coverage) and len(missing_test_paths) == 0
         evidence_mapped = bool(artifact_evidence)
 
-        if not code_mapped:
+        if invariant_id in duplicate_ids:
+            status = "fail"
+            details = "duplicate invariant id in manifest"
+        elif not code_mapped:
             status = "fail"
             details = "missing enforcement locations"
         elif not tests_mapped:
@@ -84,6 +105,7 @@ def run_security_guarantees_verification(
                 missing_code_paths=missing_code_paths,
                 missing_test_paths=missing_test_paths,
                 missing_evidence_globs=tuple(missing_evidence_globs),
+                matched_evidence_paths=tuple(matched_evidence_paths),
             )
         )
 
@@ -97,6 +119,9 @@ def run_security_guarantees_verification(
         "suite": "security_guarantees_verification",
         "status": "pass" if outcome_counts["fail"] == 0 else "fail",
         "require_evidence_presence": require_evidence_presence,
+        "manifest_path": manifest_path,
+        "invariant_count": len(results),
+        "duplicate_invariant_ids": sorted(duplicate_ids),
         "outcome_counts": outcome_counts,
         "results": [
             {
@@ -110,6 +135,7 @@ def run_security_guarantees_verification(
                 "missing_code_paths": list(item.missing_code_paths),
                 "missing_test_paths": list(item.missing_test_paths),
                 "missing_evidence_globs": list(item.missing_evidence_globs),
+                "matched_evidence_paths": list(item.matched_evidence_paths),
             }
             for item in results
         ],
@@ -121,11 +147,43 @@ def write_security_guarantees_report(report: dict[str, object], output_path: Pat
     output_path.write_text(json.dumps(report, indent=2, sort_keys=True))
 
 
+def write_security_guarantees_markdown_summary(report: dict[str, object], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Security Guarantees Verification Summary",
+        "",
+        f"- Suite: `{report.get('suite', '')}`",
+        f"- Status: `{report.get('status', '')}`",
+        f"- Invariants: `{report.get('invariant_count', 0)}`",
+        f"- Outcomes: `{json.dumps(report.get('outcome_counts', {}), sort_keys=True)}`",
+        "",
+        "## Invariant Results",
+        "",
+        "| invariant_id | status | details | mapped evidence files |",
+        "|---|---|---|---|",
+    ]
+
+    for item in report.get("results", []):
+        if not isinstance(item, dict):
+            continue
+        evidence_paths = item.get("matched_evidence_paths", [])
+        evidence_display = ", ".join(str(path) for path in evidence_paths[:3])
+        if isinstance(evidence_paths, list) and len(evidence_paths) > 3:
+            evidence_display += f", +{len(evidence_paths) - 3} more"
+        lines.append(
+            f"| {item.get('invariant_id', '')} | {item.get('status', '')} | {item.get('details', '')} | {evidence_display} |"
+        )
+
+    output_path.write_text("\n".join(lines) + "\n")
+
+
 def main() -> None:
     repo_root = Path(".")
     report = run_security_guarantees_verification(repo_root, require_evidence_presence=False)
     out = repo_root / "artifacts/logs/verification/security_guarantees.summary.json"
+    out_md = repo_root / "artifacts/logs/verification/security_guarantees.summary.md"
     write_security_guarantees_report(report, out)
+    write_security_guarantees_markdown_summary(report, out_md)
     print(json.dumps(report, indent=2, sort_keys=True))
 
 

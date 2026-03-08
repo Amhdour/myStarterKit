@@ -77,7 +77,8 @@ class SecureRetrievalService(Retriever):
         if isinstance(top_k_cap, int) and top_k_cap > 0:
             effective_top_k = min(effective_top_k, top_k_cap)
 
-        # Trust metadata and provenance remain required safe defaults even if policy omits them.
+        # Trust metadata and provenance are mandatory boundary controls.
+        # They are enforced as hard safe defaults regardless of policy toggles.
         require_trust_metadata = True
         require_provenance = True
 

@@ -1,150 +1,170 @@
-# Deployment Architecture (Practical Starter-Kit View)
+# Deployment Architecture (Practical, Implementation-Aligned)
 
-This document describes a practical deployment shape for the **implemented** starter kit.
-It intentionally avoids provider-specific infrastructure claims.
+This document shows how the **current starter-kit implementation** runs in a practical environment.
+It is intentionally provider-neutral and does **not** assume unsupported infrastructure.
 
 See also:
 - `docs/architecture.md`
+- `docs/architecture_diagrams.md`
 - `docs/trust_boundaries.md`
 - `docs/threat_model.md`
 
-## 1) Deployment Layers (What runs where)
+## 1) Deployment view: layers and runtime responsibilities
 
-### Client / Interface layer
-- External UI/API clients submit requests with `request_id`, actor, and tenant metadata.
-- Trust level: untrusted input.
+### Client / interface layer (untrusted)
+- External clients submit `SupportAgentRequest` data (`request_id`, actor/tenant/session metadata, user text).
+- Entry is untrusted and must pass orchestrator + policy checkpoints.
 
-### API / App service layer
-- Hosts `SupportAgentOrchestrator` (`app/orchestrator.py`) as the runtime entrypoint.
-- Orchestrates stage order:
-  1. `retrieval.search` policy check
+### API / app service layer
+- A runtime app service hosts `SupportAgentOrchestrator` (`app/orchestrator.py`) as the primary control-flow entrypoint.
+- Stage order in production-shaped flow:
+  1. policy check: `retrieval.search`
   2. retrieval execution
-  3. `model.generate` policy check
+  3. policy check: `model.generate`
   4. model generation
-  5. `tools.route` policy check
-  6. tool routing decisions
+  5. policy check: `tools.route`
+  6. tool routing decisions (and optionally mediated execution for tool-exec eval paths)
 
 ### Retrieval boundary layer
-- `SecureRetrievalService` (`retrieval/service.py`) fronts retrieval backend adapters.
-- Enforces tenant/source/trust/provenance controls before documents become model context.
+- `SecureRetrievalService` (`retrieval/service.py`) wraps the retriever backend.
+- `InMemorySourceRegistry` (`retrieval/registry.py`) provides source registration metadata used by boundary checks.
+- Enforces tenant/source/trust/provenance controls before content enters model context.
 
-### Policy layer
-- `RuntimePolicyEngine` (`policies/engine.py`) evaluates:
+### Policy engine layer
+- `RuntimePolicyEngine` (`policies/engine.py`) evaluates runtime actions:
   - `retrieval.search`
   - `model.generate`
   - `tools.route`
   - `tools.invoke`
-- Policy artifact source: `policies/bundles/default/policy.json`.
+- Policy artifacts are loaded from `policies/bundles/default/policy.json` through `policies/loader.py` with fail-closed behavior for invalid/missing policy.
 
-### Tool boundary layer
-- `SecureToolRouter` (`tools/router.py`) mediates all tool decisions.
-- `InMemoryToolRegistry` + execution guard enforce router-mediated execution semantics.
+### Tool router boundary layer
+- `SecureToolRouter` (`tools/router.py`) is the centralized decision point for tool routing outcomes.
+- `InMemoryToolRegistry` + execution guard (`tools/registry.py`, `tools/execution_guard.py`) enforce router-mediated execution semantics.
 
 ### Telemetry / audit layer
-- Structured `AuditEvent` emission via `telemetry/audit/contracts.py`.
-- Sinks: in-memory + JSONL (`telemetry/audit/sinks.py`).
-- Replay artifact construction via `telemetry/audit/replay.py`.
+- Structured audit events are produced via `telemetry/audit/events.py` and `telemetry/audit/contracts.py`.
+- Sinks (`telemetry/audit/sinks.py`) write JSONL evidence.
+- Replay artifacts are built from event streams using `telemetry/audit/replay.py`.
 
-### Artifact storage layer
-- File-based evidence paths in baseline:
+### Artifact storage + readiness layer
+- Baseline artifact paths:
   - `artifacts/logs/audit.jsonl`
   - `artifacts/logs/replay/*.replay.json`
   - `artifacts/logs/evals/*.jsonl`
   - `artifacts/logs/evals/*.summary.json`
-- `SecurityLaunchGate` consumes these artifacts for readiness classification.
+  - `artifacts/logs/verification/security_guarantees.summary.json`
+  - `artifacts/logs/verification/security_guarantees.summary.md`
+- `launch_gate/SecurityLaunchGate` consumes these artifacts + policy artifact to produce readiness status (`go`, `conditional_go`, `no_go`).
 
 ---
 
-## 2) Deployment Diagram (Mermaid)
+## 2) Practical deployment diagram
 
 ```mermaid
 flowchart TB
   subgraph Client[Client / Interface (Untrusted)]
-    C[Support UI / API Client]
+    U[Support UI / API Client]
   end
 
-  subgraph App[App Service]
+  subgraph App[API / App Service]
     O[SupportAgentOrchestrator]
     M[LanguageModel Adapter]
   end
 
-  subgraph Controls[Control Plane]
+  subgraph Control[Policy + Boundary Controls]
     P[RuntimePolicyEngine]
     R[SecureRetrievalService]
     T[SecureToolRouter]
   end
 
-  subgraph Backends[Boundary Backends]
+  subgraph Data[Boundary Registries / Backends]
     RR[Raw Retriever Backend]
     SR[Source Registry]
-    TR[Tool Registry / Executors]
+    TR[Tool Registry + Executors]
   end
 
   subgraph Telemetry[Telemetry / Audit]
-    AE[Audit Events]
-    AS[Audit Sink JSONL]
-    RB[Replay Builder]
+    AE[Audit Event Pipeline]
+    AJ[JSONL Audit Sink]
+    RP[Replay Artifact Builder]
   end
 
-  subgraph Evidence[Artifact Storage + Gate]
+  subgraph Artifacts[Artifact Storage + Launch Gate]
     A1[artifacts/logs/audit.jsonl]
     A2[artifacts/logs/replay/*.replay.json]
     A3[artifacts/logs/evals/*.jsonl + *.summary.json]
-    LG[launch_gate/SecurityLaunchGate]
+    A4[artifacts/logs/verification/*.summary.json|md]
+    LG[SecurityLaunchGate]
   end
 
-  C --> O
-  O --> P
-  O --> R
+  U --> O
+
+  O -->|policy checks| P
+  O -->|retrieval query| R
   R --> RR
   R --> SR
-  O --> M
-  O --> T
+  O -->|model input| M
+  O -->|tool decisions / mediated exec| T
   T --> TR
+  T -->|tools.invoke policy| P
 
   O --> AE
-  AE --> AS
-  AS --> A1
-  AS --> RB
-  RB --> A2
+  AE --> AJ
+  AJ --> A1
+  AJ --> RP
+  RP --> A2
 
   A1 --> LG
   A2 --> LG
   A3 --> LG
+  A4 --> LG
 ```
 
 ---
 
-## 3) Where security controls sit in deployment
+## 3) Security controls in deployment context
 
-| Deployment boundary | Control point | Implemented control | Primary evidence |
+| Deployment crossing | Control location(s) | Implemented control | Evidence output |
 |---|---|---|---|
-| Client -> App | Orchestrator ingress | Untrusted input handling + context propagation + stage policy checks | `request.start`, `policy.decision`, `request.end` |
-| App -> Retrieval | Secure retrieval service | Tenant/source allowlists, trust-domain filtering, trust/provenance requirements, fail-closed behavior | `retrieval.decision`, `deny.event` |
-| App -> Model | Orchestrator model stage | `model.generate` policy checkpoint before generation | `policy.decision` |
-| App -> Tool boundary | Secure tool router | allow/deny/require_confirmation, forbidden fields/actions, rate limits, policy `tools.invoke` checks | `tool.decision`, `confirmation.required`, `deny.event` |
-| Tool execution path | Router + registry + execution guard | direct non-mediated execution blocked | integration/unit verification tests + deny outcomes |
-| Runtime -> Telemetry | Audit contracts/sinks/replay | structured event schema, replay decision/lifecycle reconstruction, redaction in replay payloads | audit JSONL + replay artifacts |
-| Release readiness | Launch gate | artifact-backed checks over policy/eval/replay/audit/fallback/kill-switch | launch-gate scorecard/blockers/residual risks |
+| Client -> App | `app/orchestrator.py`, `policies/engine.py` | Stage policy gates + fail-closed blocked response path | `request.start`, `policy.decision`, `deny.event`, `request.end` |
+| App -> Retrieval | `retrieval/service.py`, `retrieval/registry.py` | Tenant/source allowlists, trust-domain checks, trust/provenance enforcement, fail-closed behavior | `retrieval.decision`, `deny.event` |
+| App -> Model | `app/orchestrator.py`, `policies/engine.py` | `model.generate` policy checkpoint before generation | `policy.decision` |
+| App -> Tool boundary | `tools/router.py`, `policies/engine.py` | Centralized allow/deny/require-confirmation + policy invoke controls | `tool.decision`, `confirmation.required`, `deny.event` |
+| Tool exec path | `tools/registry.py`, `tools/execution_guard.py` | Router-only execution mediation with callsite/context/secret checks | test + eval evidence (tool execution scenarios) |
+| Runtime -> Audit | `telemetry/audit/*` | Structured audit events + replay reconstruction | `audit.jsonl`, replay JSON |
+| Release decision | `launch_gate/engine.py` | Artifact-backed readiness checks + blockers/residual risks | launch-gate report |
 
 ---
 
-## 4) Practical baseline deployment profile
+## 4) Artifact locations and operational meaning
 
-A practical baseline for this repository is:
+| Artifact location | Produced by | Used by |
+|---|---|---|
+| `artifacts/logs/audit.jsonl` | Audit sink | Replay tooling, launch gate, security review |
+| `artifacts/logs/replay/*.replay.json` | Replay builder | Launch gate, forensic replay review |
+| `artifacts/logs/evals/*.jsonl` | Security eval runner | Launch gate, evidence pack |
+| `artifacts/logs/evals/*.summary.json` | Security eval runner | Launch gate thresholds/outcome checks |
+| `artifacts/logs/verification/security_guarantees.summary.json` | Verification runner | Reviewer evidence, compliance review |
+| `artifacts/logs/verification/security_guarantees.summary.md` | Verification runner | Human-readable guarantee review |
+
+---
+
+## 5) Practical starter-kit deployment profile
+
+Minimal credible deployment profile for this repository:
 1. One app service process hosting orchestrator/policy/retrieval/tool-router modules.
-2. One retrieval backend integration behind `SecureRetrievalService`.
-3. One audit JSONL output path.
-4. Replay generation step producing replay artifacts.
-5. Eval run step producing scenario JSONL + summary artifacts.
-6. Launch-gate run step consuming those artifacts and policy file.
+2. One retrieval backend adapter behind `SecureRetrievalService`.
+3. File-backed audit output (`audit.jsonl`) and replay artifact generation.
+4. Security eval pipeline producing JSONL + summary artifacts.
+5. Launch-gate step reading policy + audit/replay/eval/verification artifacts.
 
-This profile matches current code boundaries and evidence model without assuming external infrastructure.
+This profile matches implemented boundaries and controls without assuming cloud/vendor-specific infrastructure.
 
-## 5) Deployment readiness checklist (minimal)
+## 6) Reviewer quick checks (deployment lens)
 
-- Policy artifact exists and validates for target environment.
-- Audit pipeline emits lifecycle + decision events.
-- Replay artifacts reconstruct lifecycle/decisions.
-- Eval outputs are present and coherent.
-- Launch-gate outputs are reviewed (blockers + residual risks).
+- Are policy artifacts valid and environment-appropriate?
+- Are retrieval and tool boundaries enforced before model/tool side effects?
+- Are audit/replay artifacts present and structurally complete?
+- Are launch-gate blockers/residual risks tied to concrete artifacts?
+- Are eval artifacts showing real runtime component coverage (not mocked evidence)?

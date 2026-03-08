@@ -275,7 +275,9 @@ def test_policy_cannot_disable_trust_metadata_requirement() -> None:
         policy_engine=engine,
     )
 
-    assert service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",))) == ()
+    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",)))
+
+    assert results == ()
 
 
 def test_policy_cannot_disable_provenance_requirement() -> None:
@@ -290,4 +292,6 @@ def test_policy_cannot_disable_provenance_requirement() -> None:
         policy_engine=engine,
     )
 
-    assert service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",))) == ()
+    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",)))
+
+    assert results == ()

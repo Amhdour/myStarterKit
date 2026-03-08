@@ -1,40 +1,37 @@
 # Threat Model (Implementation-Aligned)
 
-This threat model reflects the **implemented** starter-kit runtime. It does not claim controls that are not present in code/tests.
+This threat model describes the **current implementation**, not aspirational controls.
 
-## Scope and assumptions
+## Scope
 
-### In-scope components
+In-scope runtime/control components:
 - Orchestration: `app/orchestrator.py`
-- Policy: `policies/loader.py`, `policies/schema.py`, `policies/engine.py`
+- Policy loading/evaluation: `policies/loader.py`, `policies/schema.py`, `policies/engine.py`
 - Retrieval boundaries: `retrieval/service.py`, `retrieval/registry.py`
-- Tool mediation: `tools/router.py`, `tools/registry.py`, `tools/execution_guard.py`
-- Telemetry/replay: `telemetry/audit/contracts.py`, `telemetry/audit/sinks.py`, `telemetry/audit/replay.py`
-- Security evals: `evals/runner.py`, `evals/scenarios/security_baseline.json`
-- Readiness gate: `launch_gate/engine.py`
+- Tool mediation and execution guardrails: `tools/router.py`, `tools/registry.py`, `tools/execution_guard.py`
+- Telemetry/replay: `telemetry/audit/events.py`, `telemetry/audit/sinks.py`, `telemetry/audit/replay.py`
+- Runtime evals: `evals/runner.py`, `evals/runtime.py`, `evals/scenarios/security_baseline.json`
+- Readiness/evidence gate: `launch_gate/engine.py`
 
-### Trust assumptions
-- User input and retrieved document content are untrusted.
-- Policy artifacts are trusted control inputs **only after** schema/loader validation.
-- Tool execution is high-risk and must remain router-mediated.
-- File-based artifacts under `artifacts/logs/*` are evidence inputs, not tamper-proof ledgers.
+Out of scope:
+- Provider-specific IAM, key management, network-layer controls, and immutable storage guarantees.
 
 ---
 
-## Threat register
+## Threat register (at-a-glance)
 
-| Threat | Affected components | Impact |
+| Threat | Affected component(s) | Primary impact |
 |---|---|---|
-| Prompt injection (direct) | Orchestrator + model boundary | Unsafe/incorrect responses |
-| Indirect prompt injection (retrieved content) | Retrieval + model boundary | Malicious instructions from context |
-| Retrieval poisoning | Source/document acceptance path | Unsafe/inaccurate context |
-| Cross-tenant leakage | Retrieval + policy boundary | Confidentiality breach |
-| Unsafe tool use | Tool router boundary | Unauthorized side effects |
-| Privilege escalation via tools | Tool router/registry execution boundary | Elevated operations |
-| Policy bypass | Orchestrator/retrieval/router policy checkpoints | Unauthorized behavior |
-| Sensitive information disclosure | Model/tool/telemetry surfaces | Privacy/compliance failure |
-| Audit/log tampering or gaps | Audit sinks/replay/evidence artifacts | Weak incident response and evidence quality |
-| Excessive agency | Tool-routing autonomy path | Unreviewed actions/operational risk |
+| Prompt injection | Orchestrator + model path | Unsafe output / instruction override |
+| Indirect prompt injection | Retrieval + model path | Malicious retrieved instructions influence behavior |
+| Retrieval poisoning | Source/document and retrieval acceptance | Unsafe/incorrect context |
+| Cross-tenant leakage | Retrieval + policy tenant constraints | Confidentiality breach |
+| Unsafe tool use | Tool router + policy invoke checks | Unauthorized side effects |
+| Privilege escalation through tools | Router/registry execution boundary | Elevated operations |
+| Policy bypass | Orchestrator/retrieval/tool enforcement points | Unauthorized behavior |
+| Sensitive information disclosure | Model/tool/telemetry outputs | Privacy/compliance failure |
+| Audit/log tampering or evidence gaps | Audit sinks/replay/launch-gate evidence | Weak forensics/readiness confidence |
+| Excessive agency | Tool routing + policy risk-tier/fallback controls | Unreviewed autonomous actions |
 
 ---
 
@@ -42,160 +39,166 @@ This threat model reflects the **implemented** starter-kit runtime. It does not 
 
 ## 1) Prompt injection (direct user input)
 
-- **Description**: User input attempts to override system intent (e.g., “ignore previous instructions”).
-- **Affected components**: `app/orchestrator.py`, model invocation path.
-- **Impact**: Unsafe response generation, potential policy-inconsistent outputs.
+- **Description**: User asks the system to ignore instructions/policies.
+- **Affected component**: Orchestrator and model invocation path.
+- **Impact**: Unsafe output, policy-inconsistent behavior.
 - **Existing controls**:
-  - Stage policy checks before retrieval, generation, and tool routing.
-  - Blocked response flow on policy denial/error paths.
-  - Security eval scenarios for prompt injection and unsafe disclosure.
+  - Orchestrator gates runtime stages with policy checks (`retrieval.search`, `model.generate`, `tools.route`).
+  - Fail-closed blocked response path on deny/error.
+  - Security eval scenarios for direct injection behavior.
 - **Remaining gaps**:
-  - No dedicated output moderation/DLP layer for generated text.
-  - Model behavior remains partially dependent on prompt robustness.
+  - No dedicated output moderation/DLP pipeline on final model text.
+  - Safety outcome depends partly on model behavior under adversarial prompts.
 
 ## 2) Indirect prompt injection (retrieved content)
 
-- **Description**: Adversarial instructions embedded in retrieved documents influence response generation.
-- **Affected components**: `retrieval/service.py`, model context assembly in orchestrator.
-- **Impact**: Unsafe instruction-following through retrieval context.
+- **Description**: Retrieved documents contain adversarial instructions.
+- **Affected component**: Retrieval acceptance path and model context assembly.
+- **Impact**: Malicious content can bias model behavior.
 - **Existing controls**:
-  - Source registration + tenant/source allowlist checks.
-  - Trust-domain allowlists and trust/provenance requirements.
-  - Fail-closed retrieval on missing/invalid policy/backend errors.
+  - Tenant/source allowlists, source registration checks, trust-domain constraints.
+  - Trust/provenance checks before document acceptance.
+  - Policy-controlled retrieval constraints and fail-closed behavior.
+  - Eval scenarios exercise indirect-injection cases.
 - **Remaining gaps**:
-  - No semantic classifier/sanitizer for accepted document content.
-  - No content-level quarantine pipeline beyond metadata boundary checks.
+  - No content-semantic sanitizer/classifier for accepted documents.
+  - No automated quarantine pipeline beyond metadata/trust controls.
 
 ## 3) Retrieval poisoning
 
-- **Description**: Malicious content enters an allowed source.
-- **Affected components**: Source/document boundary (`retrieval/registry.py`, `retrieval/service.py`).
-- **Impact**: Unsafe or incorrect model context and degraded response integrity.
+- **Description**: Malicious or compromised content enters an otherwise allowed source.
+- **Affected component**: Source/document boundary and retrieval filtering.
+- **Impact**: Unsafe or incorrect context passed to generation.
 - **Existing controls**:
-  - Deny unknown/unregistered/disabled sources.
-  - Enforce tenant match, trust-domain constraints, trust metadata, provenance.
-  - Fail closed when requested sources/policy constraints are inconsistent.
+  - Reject unknown, disabled, malformed, cross-tenant, or policy-disallowed sources.
+  - Require valid trust/provenance metadata for accepted documents.
+  - Fail closed on policy engine failure/denial and retrieval exceptions.
 - **Remaining gaps**:
-  - No cryptographic content attestation chain for corpus ingestion.
-  - No poisoning-detection model in baseline implementation.
+  - No cryptographic content integrity chain for corpus ingestion.
+  - No statistical/ML poisoning detector in baseline.
 
 ## 4) Cross-tenant leakage
 
-- **Description**: A request attempts to retrieve data from another tenant.
-- **Affected components**: Retrieval and policy boundaries.
-- **Impact**: Confidentiality breach across tenant partitions.
+- **Description**: Caller attempts to read another tenant’s content.
+- **Affected component**: Retrieval + policy boundaries.
+- **Impact**: Data confidentiality breach.
 - **Existing controls**:
-  - Tenant context is required in retrieval/tool invocation paths.
+  - Tenant context required in request/query paths.
   - Source tenant must match query tenant.
-  - Policy tenant/source allowlists constrain allowed retrieval scope.
+  - Policy tenant/source allowlists constrain retrieval scope.
+  - Tests cover cross-tenant denial behavior.
 - **Remaining gaps**:
-  - Security depends on policy and source registration correctness.
-  - No external IAM/ABAC integration in starter baseline.
+  - Correctness depends on policy artifact and source registry quality.
+  - No external IAM integration in this starter baseline.
 
 ## 5) Unsafe tool use
 
-- **Description**: Disallowed tools/actions/arguments are requested.
-- **Affected components**: `tools/router.py` decision path.
-- **Impact**: Unauthorized state changes or sensitive operations.
+- **Description**: Invocation attempts forbidden tools/arguments/actions.
+- **Affected component**: Tool routing and policy invoke evaluation.
+- **Impact**: Unauthorized side effects.
 - **Existing controls**:
-  - Centralized allow/deny/require-confirmation decisions.
-  - Forbidden action/field checks, argument validation, rate limits.
-  - Per-invocation policy evaluation (`tools.invoke`).
+  - `SecureToolRouter.route(...)` is the centralized decision point.
+  - Policy `tools.invoke` enforces allow/deny, forbidden tools/fields, confirmation requirements, and rate limits.
+  - Deny-by-default when policy engine is missing/failing.
 - **Remaining gaps**:
-  - Executor-side side-effect controls are deployment-specific and minimal in sample executors.
+  - Business-specific executor-side validations are minimal in sample executors.
 
 ## 6) Privilege escalation through tools
 
-- **Description**: Caller attempts to pivot to higher-privilege tool execution.
-- **Affected components**: Router + registry execution boundary.
-- **Impact**: Escalated operations outside intended policy constraints.
+- **Description**: Attempt to execute privileged tooling by bypassing router mediation.
+- **Affected component**: Router/registry/execution-guard boundary.
+- **Impact**: Elevated operations outside policy constraints.
 - **Existing controls**:
-  - Policy allowlists/forbidden tools and confirmation constraints.
-  - Router-mediated execution path only (`mediate_and_execute`).
-  - Execution secret + context guard + callsite assertion to block direct execution bypass.
+  - Execution only via `SecureToolRouter.mediate_and_execute(...)`.
+  - Registry execution secret + context checks.
+  - Callsite assertions block direct `registry.execute(...)` and wrapped-executor invocation.
+  - Tool execution path enforcement tests.
 - **Remaining gaps**:
-  - Fine-grained per-role authorization model is limited in baseline policy schema.
+  - Provider-specific alternative registries must preserve the same guard semantics.
 
 ## 7) Policy bypass
 
-- **Description**: A runtime path executes without policy evaluation.
-- **Affected components**: Orchestrator, retrieval service, tool router.
-- **Impact**: Unauthorized operations proceed without centralized policy control.
+- **Description**: Runtime actions proceed without policy checkpoints.
+- **Affected component**: Orchestrator, retrieval service, tool router.
+- **Impact**: Unauthorized retrieval/tool/model behavior.
 - **Existing controls**:
-  - Explicit checkpoints for `retrieval.search`, `model.generate`, `tools.route`, `tools.invoke`.
-  - Fail-closed behavior when policy engine is unavailable or evaluation fails.
-  - Integration tests for tool execution bypass guardrails.
+  - Explicit policy checkpoints across retrieval/model/tool route/invoke actions.
+  - Fail-closed behavior on invalid/missing policy state.
+  - Policy mutation tests prove behavior changes with policy changes.
 - **Remaining gaps**:
-  - Future code changes could introduce new paths without policy checkpoints if not reviewed.
+  - New future execution paths can regress without disciplined review/testing.
 
 ## 8) Sensitive information disclosure
 
-- **Description**: Secrets/PII leak through model output, tool arguments, or telemetry artifacts.
-- **Affected components**: model output surface, tool decision surfaces, telemetry/replay outputs.
-- **Impact**: Confidentiality and compliance risk.
+- **Description**: Sensitive data leaks through outputs, tool fields, or evidence artifacts.
+- **Affected component**: Model output, tool decisions/results, telemetry/replay artifacts.
+- **Impact**: Privacy/compliance incidents.
 - **Existing controls**:
   - Tool decision payloads redact argument values.
-  - Replay artifact sanitizes common sensitive fields.
-  - Audit events focus on decision metadata over raw content.
+  - Replay sanitization removes common sensitive fields.
+  - Audit emphasizes decisions/metadata instead of raw sensitive payloads.
 - **Remaining gaps**:
-  - No comprehensive answer-text DLP/redaction layer.
-  - Redaction list in replay is pattern-based, not exhaustive classification.
+  - No comprehensive PII/secret classifier over generated responses.
+  - Redaction is pattern-based and not exhaustive.
 
 ## 9) Audit/log tampering or evidence gaps
 
-- **Description**: Missing/modified logs reduce replay and investigation reliability.
-- **Affected components**: telemetry sinks, replay artifacts, launch-gate evidence ingestion.
-- **Impact**: Lower incident confidence and weaker launch-readiness proof.
+- **Description**: Missing/modified logs weaken investigations and launch evidence quality.
+- **Affected component**: Audit sinks, replay artifacts, launch-gate evidence checks.
+- **Impact**: Lower incident confidence and readiness false positives.
 - **Existing controls**:
-  - Structured audit event schema with trace/request/actor/tenant fields.
-  - Replay artifacts with timeline, decision summary, and coverage flags.
-  - Launch gate validates presence/consistency of policy/audit/replay/eval evidence.
+  - Structured audit events with trace/request/actor/tenant IDs.
+  - Replay artifact generation + completeness checks.
+  - Launch gate validates policy/eval/audit/replay evidence and runtime-realism proof.
 - **Remaining gaps**:
-  - File-based artifacts are mutable; no immutable/WORM storage or signature chain in baseline.
+  - File-based evidence is mutable (no signatures/WORM/attestation chain).
+  - Operational retention/immutability policy is deployment responsibility.
 
 ## 10) Excessive agency
 
-- **Description**: Agent behavior triggers autonomous side effects without sufficient confirmation/governance.
-- **Affected components**: Tool-routing and policy controls.
-- **Impact**: Operational risk and unintended actions.
+- **Description**: Agent takes side-effecting actions without sufficient governance.
+- **Affected component**: Tool route/invoke policy controls.
+- **Impact**: Unreviewed operational changes.
 - **Existing controls**:
-  - Policy-driven `tools.route` + `tools.invoke` checks.
-  - Confirmation-required tool support and deny-by-default behavior.
-  - Risk-tier policy can disable tools; fallback-to-RAG path documented/tested.
+  - Policy can disable tools by risk tier and enable fallback-to-RAG.
+  - Confirmation-required tool flows enforced at routing.
+  - Unauthorized/forbidden tool attempts denied.
 - **Remaining gaps**:
-  - Full human-in-the-loop approval orchestration remains an extension responsibility.
+  - Full multi-step human approval workflow is not implemented in baseline.
 
 ---
 
-## Required telemetry for threat investigation
+## Required telemetry for investigations
 
-For practical incident review, these event types should be present for representative flows:
+For representative requests, expected events include:
 - `request.start`
 - `policy.decision`
 - `retrieval.decision`
 - `tool.decision`
 - `deny.event` (when denied)
-- `fallback.event` (when fallback path used)
-- `error.event` (when runtime errors occur)
+- `fallback.event` (when fallback used)
+- `error.event` (when runtime exception occurs)
 - `request.end`
 
-Replay artifacts should support reconstruction of lifecycle and decision paths via:
+Replay artifacts should support:
 - `event_type_counts`
-- `coverage` (including lifecycle and core-decision completeness)
+- `coverage`
 - `decision_summary`
 - `timeline`
 
+---
+
 ## Residual risk summary
 
-Highest residual risks in current baseline:
-1. **Content-layer safety risk**: no full output moderation/DLP pass.
-2. **Retrieval integrity risk**: poisoning defenses rely mainly on metadata and policy boundaries.
-3. **Evidence integrity risk**: file-based artifacts without immutable provenance guarantees.
+Highest residual risks in current implementation:
+1. **Content safety residual**: no full output moderation/DLP layer.
+2. **Retrieval integrity residual**: poisoning defenses are primarily boundary/metadata-driven.
+3. **Evidence integrity residual**: file artifacts are not immutable/attested by default.
 
 ## Related docs
 
-- `docs/architecture.md`
 - `docs/trust_boundaries.md`
+- `docs/architecture.md`
+- `docs/architecture_diagrams.md`
 - `docs/security_guarantees.md`
 - `docs/deployment_architecture.md`
-- `docs/evidence_pack/security_guarantees_verification.md`

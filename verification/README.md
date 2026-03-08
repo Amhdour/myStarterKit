@@ -13,3 +13,4 @@ python -m verification.runner
 
 Output artifact:
 - `artifacts/logs/verification/security_guarantees.summary.json`
+- `artifacts/logs/verification/security_guarantees.summary.md`

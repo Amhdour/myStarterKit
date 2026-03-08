@@ -28,6 +28,15 @@ from telemetry.audit import (
 )
 
 
+RUNTIME_COMPONENTS = {
+    "orchestrator",
+    "retrieval",
+    "policy",
+    "tool_routing",
+    "audit_logging",
+}
+
+
 @dataclass
 class SecurityEvalRunner:
     suite_name: str = "security-redteam"
@@ -77,6 +86,7 @@ class SecurityEvalRunner:
 
         try:
             fixture = build_runtime_fixture(scenario.policy_overrides)
+            evidence.update(_runtime_realism_evidence(scenario=scenario, fixture=fixture))
 
             if scenario.operation == "orchestrator_request":
                 request = make_request(
@@ -94,6 +104,10 @@ class SecurityEvalRunner:
                         "event_types": event_types,
                         "retrieved_document_ids": list(response.trace.retrieved_document_ids),
                         "decision_log": _extract_decision_log(fixture.audit_sink.events),
+                        "runtime_components_exercised": _runtime_components_exercised(
+                            operation=scenario.operation,
+                            event_types=event_types,
+                        ),
                     }
                 )
                 self._append_replay_evidence(
@@ -134,6 +148,10 @@ class SecurityEvalRunner:
                                 "reason": decision.reason,
                             }
                         },
+                        "runtime_components_exercised": _runtime_components_exercised(
+                            operation=scenario.operation,
+                            event_types=[],
+                        ),
                     }
                 )
 
@@ -150,6 +168,10 @@ class SecurityEvalRunner:
                         "event_types": event_types,
                         "event_count": len(event_types),
                         "decision_log": _extract_decision_log(fixture.audit_sink.events),
+                        "runtime_components_exercised": _runtime_components_exercised(
+                            operation=scenario.operation,
+                            event_types=event_types,
+                        ),
                     }
                 )
                 self._append_replay_evidence(
@@ -322,6 +344,64 @@ def _extract_decision_log(events) -> dict[str, object]:
     }
 
 
+def _runtime_components_exercised(*, operation: str, event_types: list[str]) -> dict[str, bool]:
+    event_set = set(event_types)
+    if operation in {"orchestrator_request", "audit_verification"}:
+        return {
+            "orchestrator": True,
+            "retrieval": RETRIEVAL_DECISION_EVENT in event_set,
+            "policy": POLICY_DECISION_EVENT in event_set,
+            "tool_routing": TOOL_DECISION_EVENT in event_set,
+            "audit_logging": len(event_set) > 0,
+        }
+
+    if operation in {"tool_invocation", "tool_execution"}:
+        return {
+            "orchestrator": False,
+            "retrieval": False,
+            "policy": True,
+            "tool_routing": True,
+            "audit_logging": False,
+        }
+
+    return {name: False for name in RUNTIME_COMPONENTS}
+
+
+def _runtime_realism_evidence(*, scenario: SecurityScenario, fixture) -> dict[str, object]:
+    orchestrator = fixture.orchestrator
+    retriever = getattr(orchestrator, "retriever", None)
+    raw_retriever = getattr(retriever, "raw_retriever", None)
+    model = getattr(orchestrator, "model", None)
+
+    runtime_components = {
+        "orchestrator": type(orchestrator).__name__,
+        "retriever": type(retriever).__name__ if retriever is not None else "missing",
+        "policy_engine": type(getattr(orchestrator, "policy_engine", None)).__name__,
+        "tool_router": type(fixture.tool_router).__name__,
+        "audit_sink": type(fixture.audit_sink).__name__,
+    }
+
+    simulated_dependencies: list[str] = []
+    if model is not None and type(model).__module__.startswith("evals."):
+        simulated_dependencies.append("model")
+    if raw_retriever is not None and type(raw_retriever).__module__.startswith("evals."):
+        simulated_dependencies.append("retrieval_corpus")
+
+    return {
+        "runtime_components": runtime_components,
+        "simulated_dependencies": simulated_dependencies,
+        "realism_notes": (
+            [
+                "Uses real runtime orchestration/policy/retrieval/tool-router/audit modules with deterministic eval fixtures.",
+                "Model and retrieval corpus are simulated to keep scenarios deterministic and adversarially reproducible.",
+            ]
+            if simulated_dependencies
+            else ["Uses fully runtime dependencies without simulated components."]
+        ),
+        "scenario_limitation_reason": scenario.limitation_reason,
+    }
+
+
 def _evaluate_expectations(expectations: dict, evidence: dict) -> tuple[bool, str]:
     checks: list[tuple[bool, str]] = []
 
@@ -388,6 +468,26 @@ def _evaluate_expectations(expectations: dict, evidence: dict) -> tuple[bool, st
             (
                 len(evidence.get("retrieved_document_ids", [])) <= max_retrieved_docs,
                 f"expected at most {max_retrieved_docs} retrieved docs",
+            )
+        )
+
+    required_runtime_components = expectations.get("required_runtime_components", [])
+    if isinstance(required_runtime_components, list):
+        exercised = evidence.get("runtime_components_exercised", {})
+        for component in required_runtime_components:
+            checks.append(
+                (
+                    bool(exercised.get(component, False)),
+                    f"required runtime component not exercised: {component}",
+                )
+            )
+
+    max_simulated_dependencies = expectations.get("max_simulated_dependencies")
+    if isinstance(max_simulated_dependencies, int):
+        checks.append(
+            (
+                len(evidence.get("simulated_dependencies", [])) <= max_simulated_dependencies,
+                f"expected at most {max_simulated_dependencies} simulated dependencies",
             )
         )
 

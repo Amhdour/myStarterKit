@@ -91,16 +91,84 @@ def _setup_repo_like_layout(base: Path) -> None:
     )
 
     scenario_rows = [
-        {"scenario_id": "forbidden_tool_argument_attempt", "outcome": "pass"},
-        {"scenario_id": "unauthorized_tool_use_attempt", "outcome": "pass"},
-        {"scenario_id": "policy_bypass_attempt", "outcome": "pass"},
-        {"scenario_id": "allowed_tool_execution_path", "outcome": "pass"},
-        {"scenario_id": "confirmation_required_tool_flow", "outcome": "pass"},
-        {"scenario_id": "fallback_to_rag_verification", "outcome": "pass"},
-        {"scenario_id": "s1", "outcome": "pass"},
-        {"scenario_id": "s2", "outcome": "pass"},
-        {"scenario_id": "s3", "outcome": "pass"},
-        {"scenario_id": "s4", "outcome": "expected_fail"},
+        {
+            "scenario_id": "forbidden_tool_argument_attempt",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "tool_routing": True}},
+        },
+        {
+            "scenario_id": "unauthorized_tool_use_attempt",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "tool_routing": True}},
+        },
+        {
+            "scenario_id": "policy_bypass_attempt",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "tool_routing": True}},
+        },
+        {
+            "scenario_id": "allowed_tool_execution_path",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "tool_routing": True}},
+        },
+        {
+            "scenario_id": "confirmation_required_tool_flow",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "tool_routing": True}},
+        },
+        {
+            "scenario_id": "prompt_injection_direct",
+            "outcome": "pass",
+            "evidence": {
+                "mocked": False,
+                "runtime_components_exercised": {
+                    "orchestrator": True,
+                    "policy": True,
+                    "retrieval": True,
+                    "tool_routing": True,
+                    "audit_logging": True,
+                },
+            },
+        },
+        {
+            "scenario_id": "cross_tenant_retrieval_attempt",
+            "outcome": "pass",
+            "evidence": {
+                "mocked": False,
+                "runtime_components_exercised": {
+                    "orchestrator": True,
+                    "policy": True,
+                    "audit_logging": True,
+                },
+            },
+        },
+        {
+            "scenario_id": "auditability_verification",
+            "outcome": "pass",
+            "evidence": {
+                "mocked": False,
+                "runtime_components_exercised": {
+                    "orchestrator": True,
+                    "policy": True,
+                    "retrieval": True,
+                    "audit_logging": True,
+                },
+            },
+        },
+        {
+            "scenario_id": "fallback_to_rag_verification",
+            "outcome": "pass",
+            "evidence": {
+                "mocked": False,
+                "runtime_components_exercised": {
+                    "orchestrator": True,
+                    "policy": True,
+                    "retrieval": True,
+                    "audit_logging": True,
+                },
+            },
+        },
+        {"scenario_id": "s4", "outcome": "expected_fail", "evidence": {"mocked": False}},
     ]
     (base / "artifacts/logs/evals/security-redteam-20260101T000000Z.jsonl").write_text(
         "\n".join(json.dumps(item) for item in scenario_rows)
@@ -293,6 +361,42 @@ def test_eval_summary_jsonl_mismatch_blocks_readiness(tmp_path) -> None:
 
     assert report.status == NO_GO_STATUS
     assert _scorecard_status(report, "eval_suite_evidence") == "fail"
+
+
+def test_eval_runtime_realism_failure_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    eval_jsonl = tmp_path / "artifacts/logs/evals/security-redteam-20260101T000000Z.jsonl"
+    rows = [json.loads(line) for line in eval_jsonl.read_text().splitlines() if line.strip()]
+    for row in rows:
+        if row.get("scenario_id") == "prompt_injection_direct":
+            row["evidence"]["runtime_components_exercised"]["retrieval"] = False
+    eval_jsonl.write_text("\n".join(json.dumps(item) for item in rows))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert report.status == NO_GO_STATUS
+    assert _scorecard_status(report, "eval_suite_evidence") == "fail"
+    check = next(item for item in report.checks if item.check_name == "eval_suite_evidence")
+    assert check.evidence["runtime_realism_failures"]
+
+
+def test_mocked_tool_router_evidence_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    eval_jsonl = tmp_path / "artifacts/logs/evals/security-redteam-20260101T000000Z.jsonl"
+    rows = [json.loads(line) for line in eval_jsonl.read_text().splitlines() if line.strip()]
+    for row in rows:
+        if row.get("scenario_id") == "unauthorized_tool_use_attempt":
+            row["evidence"]["mocked"] = True
+    eval_jsonl.write_text("\n".join(json.dumps(item) for item in rows))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert report.status == NO_GO_STATUS
+    assert _scorecard_status(report, "tool_router_enforcement") == "fail"
+    check = next(item for item in report.checks if item.check_name == "tool_router_enforcement_evidence")
+    assert check.evidence["realism_failures"]
 
 
 def test_scorecard_contains_expected_categories(tmp_path) -> None:

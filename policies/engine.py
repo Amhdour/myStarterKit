@@ -109,6 +109,15 @@ class RuntimePolicyEngine(PolicyEngine):
             )
 
         if action == "tools.invoke":
+            if not tier.tools_enabled:
+                return PolicyDecision(
+                    request_id=request_id,
+                    allow=False,
+                    reason="tools disabled for risk tier",
+                    risk_tier=risk_tier,
+                    fallback_to_rag=self.policy.fallback_to_rag,
+                )
+
             tenant_id = str(context.get("tenant_id", ""))
             tool_name = str(context.get("tool_name", ""))
             action_name = str(context.get("action", ""))

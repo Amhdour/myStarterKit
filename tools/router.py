@@ -39,16 +39,9 @@ class SecureToolRouter:
         descriptor = self.registry.get(invocation.tool_name)
         if descriptor is None:
             return self._deny(invocation, "tool is not registered")
-        if not descriptor.allowed:
-            return self._deny(invocation, "tool is not allowlisted")
 
         if invocation.action in descriptor.forbidden_actions:
             return self._deny(invocation, "action is forbidden for this tool")
-
-        forbidden_fields = set(descriptor.forbidden_fields)
-        violating_fields = sorted(field for field in invocation.arguments if field in forbidden_fields)
-        if violating_fields:
-            return self._deny(invocation, f"forbidden argument fields: {', '.join(violating_fields)}")
 
         if not self._valid_arguments(invocation.arguments):
             return self._deny(invocation, "tool arguments failed validation")
@@ -89,20 +82,6 @@ class SecureToolRouter:
                 key = f"{invocation.tenant_id}:{invocation.actor_id}:{invocation.tool_name}"
                 if not self.rate_limiter.allow(key, policy_rate_limit):
                     return self._deny(invocation, "rate limit exceeded")
-
-        if descriptor.confirmation_required and not invocation.confirmed:
-            return ToolDecision(
-                status=REQUIRE_CONFIRMATION_DECISION,
-                tool_name=invocation.tool_name,
-                action=invocation.action,
-                reason="tool use requires explicit confirmation",
-                sanitized_arguments=self._sanitize_arguments(invocation.arguments),
-            )
-
-        if descriptor.rate_limit_per_minute is not None:
-            key = f"{invocation.tenant_id}:{invocation.actor_id}:{invocation.tool_name}"
-            if not self.rate_limiter.allow(key, descriptor.rate_limit_per_minute):
-                return self._deny(invocation, "rate limit exceeded")
 
         return ToolDecision(
             status=ALLOWED_DECISION,

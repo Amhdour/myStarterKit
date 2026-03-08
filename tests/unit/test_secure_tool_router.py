@@ -36,6 +36,20 @@ class AllowInvokePolicyEngine:
         )
 
 
+class DenyInvokePolicyEngine:
+    class _Decision:
+        def __init__(self, reason: str = "tool denied by policy"):
+            self.allow = False
+            self.reason = reason
+            self.constraints = {}
+
+    def __init__(self, *, reason: str = "tool denied by policy") -> None:
+        self.reason = reason
+
+    def evaluate(self, request_id: str, action: str, context: dict):
+        return self._Decision(reason=self.reason)
+
+
 def _router_with_tool(tool: ToolDescriptor, executor=None, policy_engine=None) -> SecureToolRouter:
     registry = InMemoryToolRegistry()
     registry.register(tool, executor=executor)
@@ -121,6 +135,24 @@ def test_cannot_force_execution_by_manually_entering_router_context() -> None:
     with pytest.raises(DirectToolExecutionDeniedError):
         _ = enter_router_execution_context(router._execution_secret)
 
+
+def test_cannot_bypass_router_by_forging_execution_context_and_secret() -> None:
+    from tools.execution_guard import _ROUTER_EXECUTION_CONTEXT
+
+    registry = InMemoryToolRegistry()
+    registry.register(
+        ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True),
+        executor=lambda _: {"ok": True},
+    )
+    router = SecureToolRouter(registry=registry, rate_limiter=InMemoryToolRateLimiter())
+
+    token = _ROUTER_EXECUTION_CONTEXT.set(router._execution_secret)
+    try:
+        with pytest.raises(DirectToolExecutionDeniedError):
+            registry.execute(_invocation(tool_name="ticket_lookup"), execution_secret=router._execution_secret)
+    finally:
+        _ROUTER_EXECUTION_CONTEXT.reset(token)
+
 def test_tool_router_fails_closed_when_policy_engine_missing() -> None:
     registry = InMemoryToolRegistry()
     registry.register(
@@ -137,19 +169,23 @@ def test_tool_router_fails_closed_when_policy_engine_missing() -> None:
 
 def test_forbidden_tool_denial() -> None:
     router = _router_with_tool(
-        ToolDescriptor(name="ticket_lookup", description="lookup", allowed=False)
+        ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True),
+        policy_engine=DenyInvokePolicyEngine(reason="tool forbidden"),
     )
 
     decision = router.route(_invocation(tool_name="ticket_lookup"))
 
     assert decision.status == DENY_DECISION
-    assert "allowlisted" in decision.reason
+    assert "policy denied: tool forbidden" == decision.reason
 
 
 
 
 def test_denied_tool_decision_contains_audit_context() -> None:
-    router = _router_with_tool(ToolDescriptor(name="ticket_lookup", description="lookup", allowed=False))
+    router = _router_with_tool(
+        ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True),
+        policy_engine=DenyInvokePolicyEngine(reason="tool forbidden"),
+    )
 
     decision = router.route(_invocation(tool_name="ticket_lookup"))
 
@@ -159,19 +195,31 @@ def test_denied_tool_decision_contains_audit_context() -> None:
     assert decision.reason
 
 def test_forbidden_field_blocking() -> None:
+    class ForbiddenFieldPolicyEngine:
+        class _Decision:
+            def __init__(self, allow: bool, reason: str):
+                self.allow = allow
+                self.reason = reason
+                self.constraints = {}
+
+        def evaluate(self, request_id: str, action: str, context: dict):
+            if "ssn" in context.get("arguments", {}):
+                return self._Decision(allow=False, reason="forbidden field in arguments: ssn")
+            return self._Decision(allow=True, reason="allowed")
+
     router = _router_with_tool(
         ToolDescriptor(
             name="ticket_lookup",
             description="lookup",
             allowed=True,
-            forbidden_fields=("ssn",),
-        )
+        ),
+        policy_engine=ForbiddenFieldPolicyEngine(),
     )
 
     decision = router.route(_invocation(tool_name="ticket_lookup", arguments={"ticket_id": "T-1", "ssn": "1"}))
 
     assert decision.status == DENY_DECISION
-    assert "forbidden argument fields" in decision.reason
+    assert "policy denied: forbidden field in arguments: ssn" == decision.reason
 
 
 def test_confirmation_required_flow() -> None:
@@ -180,8 +228,8 @@ def test_confirmation_required_flow() -> None:
             name="account_update",
             description="update",
             allowed=True,
-            confirmation_required=True,
-        )
+        ),
+        policy_engine=AllowInvokePolicyEngine(confirmation_required=True),
     )
 
     unconfirmed = router.route(_invocation(tool_name="account_update", confirmed=False))
@@ -197,8 +245,8 @@ def test_rate_limit_enforcement() -> None:
             name="ticket_lookup",
             description="lookup",
             allowed=True,
-            rate_limit_per_minute=1,
-        )
+        ),
+        policy_engine=AllowInvokePolicyEngine(rate_limit_per_minute=1),
     )
 
     first = router.route(_invocation(tool_name="ticket_lookup"))
@@ -253,17 +301,6 @@ def test_router_executes_registered_executor_once_for_allowed_calls() -> None:
     assert decision.status == ALLOWED_DECISION
     assert result == {"status": "ok"}
     assert calls == ["ticket_lookup"]
-
-
-class DenyInvokePolicyEngine:
-    class _Decision:
-        def __init__(self):
-            self.allow = False
-            self.reason = "tool denied by policy"
-            self.constraints = {}
-
-    def evaluate(self, request_id: str, action: str, context: dict):
-        return self._Decision()
 
 
 def test_tool_denial_by_policy_blocks_execution() -> None:

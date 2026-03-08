@@ -65,6 +65,15 @@ class LaunchGateConfig:
             "confirmation_required_tool_flow": "pass",
         }
     )
+    required_runtime_scenario_components: Mapping[str, Sequence[str]] = field(
+        default_factory=lambda: {
+            "prompt_injection_direct": ("orchestrator", "policy", "retrieval", "tool_routing", "audit_logging"),
+            "cross_tenant_retrieval_attempt": ("orchestrator", "policy", "audit_logging"),
+            "auditability_verification": ("orchestrator", "policy", "retrieval", "audit_logging"),
+            "allowed_tool_execution_path": ("policy", "tool_routing"),
+            "confirmation_required_tool_flow": ("policy", "tool_routing"),
+        }
+    )
     required_fallback_scenario_id: str = "fallback_to_rag_verification"
     require_fallback_ready: bool = True
     require_replay_artifact: bool = True
@@ -285,22 +294,36 @@ class SecurityLaunchGate:
             )
 
         by_id = {
-            str(item.get("scenario_id", "")): str(item.get("outcome", ""))
+            str(item.get("scenario_id", "")): item
             for item in bundle.jsonl_records
-            if isinstance(item, dict)
+            if isinstance(item, dict) and str(item.get("scenario_id", ""))
         }
 
         missing_or_mismatched: dict[str, dict[str, str]] = {}
         for scenario_id, expected in self.config.required_tool_router_scenario_outcomes.items():
-            actual = by_id.get(scenario_id)
+            row = by_id.get(scenario_id)
+            actual = str(row.get("outcome", "")) if isinstance(row, dict) else None
             if actual != expected:
                 missing_or_mismatched[scenario_id] = {"expected": expected, "actual": actual or "missing"}
 
-        passed = len(missing_or_mismatched) == 0
+        realism_failures: dict[str, str] = {}
+        for scenario_id in self.config.required_tool_router_scenario_outcomes:
+            row = by_id.get(scenario_id)
+            if not isinstance(row, dict):
+                continue
+            evidence = row.get("evidence", {}) if isinstance(row.get("evidence", {}), dict) else {}
+            if evidence.get("mocked") is True:
+                realism_failures[scenario_id] = "scenario evidence is mocked"
+                continue
+            exercised = evidence.get("runtime_components_exercised", {}) if isinstance(evidence.get("runtime_components_exercised", {}), dict) else {}
+            if not bool(exercised.get("policy", False)) or not bool(exercised.get("tool_routing", False)):
+                realism_failures[scenario_id] = "policy/tool_routing runtime components not exercised"
+
+        passed = len(missing_or_mismatched) == 0 and len(realism_failures) == 0
         details = (
             "tool-router enforcement evidence satisfied"
             if passed
-            else "tool-router enforcement evidence missing required scenario outcomes"
+            else "tool-router enforcement evidence missing required outcomes or runtime realism proof"
         )
         return GateCheckResult(
             check_name="tool_router_enforcement_evidence",
@@ -311,8 +334,12 @@ class SecurityLaunchGate:
                 "summary_path": bundle.summary_path,
                 "eval_jsonl_path": bundle.jsonl_path,
                 "required_scenarios": dict(self.config.required_tool_router_scenario_outcomes),
-                "scenario_outcomes": {k: by_id.get(k, "missing") for k in self.config.required_tool_router_scenario_outcomes},
+                "scenario_outcomes": {
+                    k: str((by_id.get(k, {}) if isinstance(by_id.get(k, {}), dict) else {}).get("outcome", "missing"))
+                    for k in self.config.required_tool_router_scenario_outcomes
+                },
                 "missing_or_mismatched": missing_or_mismatched,
+                "realism_failures": realism_failures,
             },
         )
 
@@ -472,6 +499,26 @@ class SecurityLaunchGate:
         calculated_passed = sum(1 for item in bundle.jsonl_records if str(item.get("outcome", "")) == "pass")
         summary_matches_jsonl = total == calculated_total and passed_count == calculated_passed
 
+        scenario_map = {
+            str(item.get("scenario_id", "")): item
+            for item in bundle.jsonl_records
+            if isinstance(item, dict) and str(item.get("scenario_id", ""))
+        }
+        realism_failures: dict[str, str] = {}
+        for scenario_id, required_components in self.config.required_runtime_scenario_components.items():
+            row = scenario_map.get(scenario_id)
+            if row is None:
+                realism_failures[scenario_id] = "scenario evidence row missing"
+                continue
+            evidence = row.get("evidence", {}) if isinstance(row.get("evidence", {}), dict) else {}
+            if evidence.get("mocked") is True:
+                realism_failures[scenario_id] = "scenario evidence is mocked"
+                continue
+            exercised = evidence.get("runtime_components_exercised", {}) if isinstance(evidence.get("runtime_components_exercised", {}), dict) else {}
+            missing_components = [component for component in required_components if not bool(exercised.get(component, False))]
+            if missing_components:
+                realism_failures[scenario_id] = f"missing runtime components: {', '.join(missing_components)}"
+
         passed = (
             total > 0
             and pass_rate >= self.config.min_eval_pass_rate
@@ -479,8 +526,13 @@ class SecurityLaunchGate:
             and inconclusive_count == 0
             and bool(summary.get("passed", False))
             and summary_matches_jsonl
+            and len(realism_failures) == 0
         )
-        details = "eval suite evidence satisfied" if passed else "eval suite evidence failed threshold/outcome health"
+        details = (
+            "eval suite evidence satisfied"
+            if passed
+            else "eval suite evidence failed threshold/outcome health or runtime-realism checks"
+        )
         return GateCheckResult(
             check_name="eval_suite_evidence",
             status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
@@ -499,6 +551,10 @@ class SecurityLaunchGate:
                 "jsonl_record_count": calculated_total,
                 "jsonl_pass_count": calculated_passed,
                 "summary_matches_jsonl": summary_matches_jsonl,
+                "required_runtime_scenarios": {
+                    key: list(value) for key, value in self.config.required_runtime_scenario_components.items()
+                },
+                "runtime_realism_failures": realism_failures,
             },
         )
 

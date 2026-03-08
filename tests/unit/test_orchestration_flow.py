@@ -17,7 +17,8 @@ class FakePolicyEngine:
         self.calls.append(action)
         allow = action not in self.denied_actions
         reason = "allowed" if allow else f"{action} denied"
-        return PolicyDecision(request_id=request_id, allow=allow, reason=reason)
+        constraints = {"allowed_tools": ["ticket_lookup", "admin_shell"]} if action == "tools.route" else {}
+        return PolicyDecision(request_id=request_id, allow=allow, reason=reason, constraints=constraints)
 
 
 class FakeRetriever:
@@ -324,4 +325,3 @@ def test_orchestration_limits_tool_candidates_to_policy_allowed_tools() -> None:
 
     assert response.status == "ok"
     assert router.routed_tools == ["ticket_lookup"]
-
