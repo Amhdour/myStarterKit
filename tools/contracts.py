@@ -66,6 +66,10 @@ class ToolRegistry(Protocol):
         """List tools currently allowlisted for routing."""
         ...
 
+    def list_registered(self) -> Sequence[ToolDescriptor]:
+        """List all registered tools for policy-mediated selection."""
+        ...
+
     def bind_execution_secret(self, secret: object) -> None:
         """Bind an execution secret used to ensure only router-mediated execution."""
         ...

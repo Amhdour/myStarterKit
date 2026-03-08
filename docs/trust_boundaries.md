@@ -1,173 +1,180 @@
 # Trust Boundaries (Implementation-Aligned)
 
-This document describes trust boundaries that are implemented in this repository and maps each boundary to concrete enforcement points.
+This document describes trust boundaries that **exist in the current codebase** and maps each boundary to:
+- what crosses the boundary,
+- what can go wrong,
+- implemented controls,
+- expected audit logging.
 
-## Boundary matrix
+## Boundary map
 
-| Boundary | Primary enforcement points |
+| Boundary | Primary enforcement locations |
 |---|---|
 | User boundary | `app/orchestrator.py`, `policies/engine.py` |
 | Application / orchestrator boundary | `app/orchestrator.py` |
 | Model boundary | `app/orchestrator.py`, `app/modeling.py` |
-| Retrieval boundary | `retrieval/service.py`, `retrieval/registry.py` |
+| Retrieval boundary | `retrieval/service.py`, `policies/engine.py`, `retrieval/registry.py` |
 | Source / document boundary | `retrieval/contracts.py`, `retrieval/service.py` |
-| Tool boundary | `tools/router.py`, `tools/registry.py`, `tools/execution_guard.py` |
+| Tool boundary | `tools/router.py`, `tools/registry.py`, `tools/execution_guard.py`, `policies/engine.py` |
 | Policy boundary | `policies/loader.py`, `policies/schema.py`, `policies/engine.py` |
-| Telemetry / audit boundary | `telemetry/audit/contracts.py`, `telemetry/audit/sinks.py`, `telemetry/audit/replay.py` |
-| Operator / admin boundary | `launch_gate/engine.py`, `evals/runner.py` |
+| Telemetry / audit boundary | `telemetry/audit/events.py`, `telemetry/audit/sinks.py`, `telemetry/audit/replay.py` |
+| Operator / admin boundary | `launch_gate/engine.py`, `verification/runner.py`, `evals/runner.py` |
 
 ---
 
 ## 1) User boundary
 
 **What crosses it**
-- `SupportAgentRequest` fields from external callers (`request_id`, session actor/tenant metadata, `user_text`).
+- External request input (`request_id`, session actor/tenant/channel metadata, `user_text`).
 
 **What can go wrong**
-- Prompt injection, tenant spoofing, unsafe disclosure requests, malformed request metadata.
+- Prompt injection, tenant spoofing, malformed identity context, unsafe disclosure prompts.
 
 **What controls exist**
-- Orchestrator policy gates for `retrieval.search`, `model.generate`, and `tools.route` before downstream actions.
-- Blocked responses when policy denies or exceptions occur.
+- Orchestrator runs policy checks before retrieval (`retrieval.search`), generation (`model.generate`), and tools (`tools.route`).
+- Fail-closed blocked response path on deny/error.
 
 **What should be logged**
-- `request.start`, stage `policy.decision`, `deny.event` / `fallback.event` / `error.event`, and `request.end`.
+- `request.start`, `policy.decision`, `deny.event`/`fallback.event`/`error.event`, `request.end`.
 
 ## 2) Application / orchestrator boundary
 
 **What crosses it**
-- Internal calls from orchestrator to retrieval, model, and tool routing subsystems.
+- Internal hand-offs from orchestrator to retrieval service, model, tool router, and audit sink.
 
 **What can go wrong**
-- Stage-order regressions, policy bypass, missing deny/fallback evidence.
+- Stage bypass or reordering, missing policy checkpoints, missing deny/fallback evidence.
 
 **What controls exist**
-- Explicit, ordered policy checks and stage-local deny handling in `SupportAgentOrchestrator.run(...)`.
-- Context propagation (`request_id`, `trace_id`, actor, tenant) into downstream calls.
+- Ordered stage flow in `SupportAgentOrchestrator.run(...)`.
+- Explicit deny/fallback handling at each decision stage.
+- Request/actor/tenant/trace context propagation to downstream systems.
 
 **What should be logged**
-- Policy decisions for each stage, retrieval/tool decision events, and lifecycle start/end.
+- Policy decisions per stage plus retrieval/tool decision events and lifecycle start/end.
 
 ## 3) Model boundary
 
 **What crosses it**
-- `ModelInput` containing user text, retrieved context, and metadata.
+- `ModelInput` with user text + retrieval context + metadata.
 
 **What can go wrong**
-- Unsafe model output, over-disclosure, malicious instruction adherence.
+- Unsafe generation, disclosure, compliance with malicious instructions.
 
 **What controls exist**
-- Policy gate before model invocation.
-- Retrieval filtering/trust/provenance checks before model context is assembled.
-- Security eval scenarios targeting unsafe disclosure and injection behavior.
+- Model generation occurs only after policy allow for `model.generate`.
+- Retrieval context is pre-filtered by tenant/source/trust/provenance controls.
+- Security eval scenarios exercise unsafe disclosure and injection behavior.
 
 **What should be logged**
-- Model-stage `policy.decision` plus any `deny.event`/`error.event` and lifecycle events.
+- `policy.decision` for model stage and any deny/error lifecycle outcomes.
 
 ## 4) Retrieval boundary
 
 **What crosses it**
-- Tenant-scoped `RetrievalQuery` with requested source IDs and top-k.
-- Raw documents returned by retriever backend.
+- Tenant-bound `RetrievalQuery` and backend-returned documents.
 
 **What can go wrong**
-- Cross-tenant retrieval, source allowlist bypass, permissive behavior on policy/backend failure.
+- Cross-tenant leakage, unauthorized source access, permissive behavior when policy/backend fails.
 
 **What controls exist**
-- Fail-closed retrieval path when policy is missing/invalid/denied.
-- Policy-constrained `allowed_source_ids`, `top_k_cap`, and trust-domain filtering.
-- Tenant/source checks through source registry.
+- Fail-closed on missing/invalid query context.
+- Fail-closed when policy engine is absent, policy evaluate fails, or policy denies.
+- Policy-constrained source allowlists and trust-domain filtering.
+- Top-k constrained by policy.
 
 **What should be logged**
-- Retrieval-stage `policy.decision`, `retrieval.decision`, and deny/error events where applicable.
+- `policy.decision` for retrieval, `retrieval.decision`, and deny/error events when blocked.
 
 ## 5) Source / document boundary
 
 **What crosses it**
-- Source registrations, trust metadata, provenance metadata, and document content.
+- Source registration metadata, document trust metadata, and provenance/citation metadata.
 
 **What can go wrong**
-- Unknown/disabled source use, tenant/source mismatch, missing trust metadata, missing provenance.
+- Unknown source use, disabled-source use, tenant/source mismatch, missing trust/provenance metadata.
 
 **What controls exist**
-- Registry validation and enabled-source checks.
-- Trust metadata and provenance requirements retained as safe defaults.
-- Document acceptance only when source + trust + provenance checks pass.
+- Only tenant-registered, enabled, well-formed sources are eligible.
+- Source trust domain must be policy-allowed.
+- Trust metadata and provenance checks are enforced for accepted documents.
+- Accepted results receive source-aligned provenance attachment.
 
 **What should be logged**
-- Retrieval decisions and downstream deny/error events for blocked retrieval paths.
+- Retrieval decisions and any upstream deny/error events for blocked retrieval paths.
 
 ## 6) Tool boundary
 
 **What crosses it**
-- `ToolInvocation` (`request_id`, actor, tenant, tool/action/arguments/confirmation).
+- `ToolInvocation` (request/actor/tenant/tool/action/arguments/confirmation).
 
 **What can go wrong**
-- Unauthorized tool calls, forbidden argument abuse, direct execution bypass.
+- Unauthorized tool use, forbidden argument attempts, direct executor invocation bypass.
 
 **What controls exist**
-- Centralized decisioning in `SecureToolRouter.route(...)` for allow/deny/require-confirmation.
-- Router-mediated execution only (`mediate_and_execute`) with runtime execution guard + registry secret checks.
-- Policy-aware deny-by-default behavior when policy engine is unavailable.
+- `SecureToolRouter.route(...)` is the decision point for allow/deny/require-confirmation.
+- Policy (`tools.invoke`) governs forbidden tools/fields, confirmation, and rate limits.
+- Execution only through `mediate_and_execute(...)`.
+- Runtime call-site guard + execution-secret guard in registry/executor paths block direct invocation outside router.
 
 **What should be logged**
-- `tool.execution_attempt`, `tool.decision`, `confirmation.required`, and `deny.event`.
+- `tool.execution_attempt`, `tool.decision`, `confirmation.required`, `deny.event`.
 
 ## 7) Policy boundary
 
 **What crosses it**
-- Policy bundle loading, validation, and action-specific policy evaluations.
+- Policy artifact loading + validation and runtime policy decisions.
 
 **What can go wrong**
-- Invalid/missing policy artifacts, unintended permissive defaults.
+- Missing/invalid policy file, malformed schema, accidental permissive fallback.
 
 **What controls exist**
-- Policy loader/schema validation with restrictive fallback behavior.
-- Runtime policy enforcement for retrieval/tool routing/tool invocation constraints.
-- Kill-switch and fallback-to-RAG controls enforced via policy decisions.
+- `load_policy(...)` returns restrictive policy on missing/unreadable/invalid policy.
+- `RuntimePolicyEngine` denies unknown actions and kill-switch-enabled states.
+- Policy decisions drive retrieval/tool controls and fallback behavior.
 
 **What should be logged**
-- `policy.decision` with reason/risk-tier and associated deny/fallback events.
+- `policy.decision` with action/allow/reason/risk tier and linked deny/fallback outcomes.
 
 ## 8) Telemetry / audit boundary
 
 **What crosses it**
-- Structured audit events into in-memory/JSONL sinks and replay artifacts.
+- Structured runtime events into sinks and replay artifacts.
 
 **What can go wrong**
-- Missing lifecycle coverage, incomplete decision reconstruction, sensitive payload leakage.
+- Missing lifecycle events, weak replay reconstruction, incomplete actor/request attribution.
 
 **What controls exist**
-- Structured `AuditEvent` contract with request/actor/tenant/trace metadata.
-- JSONL sink and replay artifact generation with decision summaries + coverage flags.
-- Replay payload sanitization for sensitive fields.
+- Structured audit event contract with trace/request/actor/tenant IDs.
+- JSONL and in-memory sinks.
+- Replay artifact builder + completeness validation used by evals/launch-gate checks.
 
 **What should be logged**
-- Full request lifecycle and key decisions (`request.start/end`, policy/retrieval/tool decisions, deny/fallback/error).
+- Full lifecycle + decision events: `request.start/end`, policy/retrieval/tool decisions, deny/fallback/error.
 
 ## 9) Operator / admin boundary
 
 **What crosses it**
-- Policy/config updates, evaluation artifacts, launch readiness decisions.
+- Policy updates, eval outputs, launch-gate inputs, verification artifacts.
 
 **What can go wrong**
-- Promotion without evidence, ignoring residual risks, misconfigured policy/evidence paths.
+- Declaring launch readiness without real evidence, stale/missing artifact use, ignored residual risks.
 
 **What controls exist**
-- Launch-gate checks over aligned eval summary+jsonl, replay artifacts, and telemetry evidence.
-- Explicit blocker vs residual-risk classification in launch-gate reports.
-- Security guarantees verification manifest/runner linking invariants to code/tests/evidence.
+- Launch gate reads concrete artifacts (policy, eval summary/jsonl, audit logs, replay artifacts).
+- Readiness status derived from explicit checks, blockers, and residual risks.
+- Security guarantees runner maps invariants to enforcement code/tests/artifacts.
 
-**What should be logged**
-- Launch-gate report outputs, referenced evidence paths, and verification summary artifacts.
+**What should be logged / recorded**
+- Launch-gate report (`checks`, `scorecard`, `blockers`, `residual_risks`).
+- Security guarantees verification summary artifacts.
 
 ---
 
-## Related docs
+## Reviewer checklist (boundary-focused)
 
-- `docs/architecture.md`
-- `docs/architecture_diagrams.md`
-- `docs/deployment_architecture.md`
-- `docs/security_guarantees.md`
-- `docs/threat_model.md`
-- `docs/evidence_pack/security_guarantees_verification.md`
+- Are policy checkpoints present before retrieval/model/tools?
+- Are tool execution paths still router-mediated only?
+- Are retrieval decisions tenant/source/trust/provenance constrained and fail-closed?
+- Are deny/fallback/error decisions visible in audit logs?
+- Are launch decisions traceable to real artifacts (not inferred state)?

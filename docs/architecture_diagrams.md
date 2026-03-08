@@ -4,6 +4,8 @@ This document visualizes the **implemented** runtime architecture and trust boun
 
 For boundary-by-boundary control/risk/logging details, see `docs/trust_boundaries.md`.
 
+For practical runtime deployment/control placement, see `docs/deployment_architecture.md`.
+
 For concrete implemented threats, controls, and residual gaps, see `docs/threat_model.md`.
 
 ## 1) System Architecture Overview
@@ -210,7 +212,7 @@ flowchart LR
     S --> J[JsonlAuditSink]
     J --> F[artifacts/logs/audit.jsonl]
     F --> R[build_replay_artifact]
-    R --> RF[artifacts/logs/replay*.json]
+    R --> RF[artifacts/logs/replay/*.replay.json]
     F --> LG[Launch Gate checks]
 ```
 

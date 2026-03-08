@@ -26,6 +26,10 @@ ALLOWED_EXECUTION_GUARD_ENTRYPOINTS = {
     "tools/execution_guard.py",
 }
 
+ALLOWED_EXECUTION_CONTEXT_VAR_REFERENCES = {
+    "tools/execution_guard.py",
+}
+
 
 def test_execution_guard_context_entry_only_used_by_router() -> None:
     offenders: list[str] = []
@@ -38,3 +42,16 @@ def test_execution_guard_context_entry_only_used_by_router() -> None:
             offenders.append(rel)
 
     assert not offenders, f"Execution guard bypass risk: unexpected context-entry call sites {offenders}"
+
+
+def test_execution_context_storage_not_mutated_outside_guard_module() -> None:
+    offenders: list[str] = []
+    for path in Path('.').rglob('*.py'):
+        rel = path.as_posix()
+        if rel.startswith('.git/') or '/tests/' in f'/{rel}' or rel.startswith('tests/'):
+            continue
+        text = path.read_text(encoding='utf-8')
+        if '_ROUTER_EXECUTION_CONTEXT' in text and rel not in ALLOWED_EXECUTION_CONTEXT_VAR_REFERENCES:
+            offenders.append(rel)
+
+    assert not offenders, f"Execution context bypass risk: unexpected context-var references {offenders}"

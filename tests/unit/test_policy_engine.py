@@ -196,6 +196,70 @@ def test_policy_changes_retrieval_runtime_behavior() -> None:
     assert len(allowed_service.search(query)) == 1
 
 
+def test_retrieval_metadata_requirements_are_fail_closed_even_when_policy_relaxes_them() -> None:
+    class MissingTrustRawRetriever:
+        def search(self, query: RetrievalQuery):
+            return (
+                RetrievalDocument(
+                    document_id="doc-1",
+                    content="KB answer",
+                    trust=SourceTrustMetadata(
+                        source_id="kb-main",
+                        tenant_id=query.tenant_id,
+                        checksum="",
+                        ingested_at="",
+                    ),
+                    provenance=DocumentProvenance(
+                        citation_id="cite-1",
+                        source_id="kb-main",
+                        document_uri="kb://doc-1",
+                        chunk_id="chunk-1",
+                    ),
+                    attributes={},
+                ),
+            )
+
+    registry = InMemorySourceRegistry()
+    registry.register(SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="kb", enabled=True))
+
+    relaxed_payload = _policy_payload()
+    relaxed_payload["retrieval"]["require_trust_metadata"] = False
+    relaxed_engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=relaxed_payload))
+
+    query = RetrievalQuery(
+        request_id="req-1",
+        tenant_id="tenant-a",
+        query_text="reset",
+        top_k=5,
+        allowed_source_ids=("kb-main",),
+    )
+
+    relaxed_service = SecureRetrievalService(source_registry=registry, raw_retriever=MissingTrustRawRetriever(), policy_engine=relaxed_engine)
+
+    assert relaxed_service.search(query) == ()
+
+
+def test_tools_invoke_denied_when_risk_tier_disables_tools() -> None:
+    payload = _policy_payload()
+    payload["risk_tiers"]["high"]["tools_enabled"] = False
+    engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=payload))
+
+    decision = engine.evaluate(
+        "req-1",
+        "tools.invoke",
+        {
+            "tenant_id": "tenant-a",
+            "tool_name": "ticket_lookup",
+            "action": "lookup",
+            "arguments": {},
+            "risk_tier": "high",
+        },
+    )
+
+    assert decision.allow is False
+    assert "tools disabled for risk tier" in decision.reason
+
+
 def test_kill_switch_behavior_blocks_request() -> None:
     engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=_policy_payload(kill_switch=True)))
     model = FakeModel()

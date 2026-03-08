@@ -9,6 +9,7 @@ The launch gate verifies launch status using **real artifacts**, not inferred as
 - Telemetry evidence exists in audit logs with required event types and lifecycle identity fields.
 - Replay evidence (when required) exists, has valid replay schema, and request lifecycle coverage.
 - Eval summary thresholds are met and match the underlying jsonl scenario records.
+- Eval jsonl records include runtime-realism evidence (`mocked=false` and required runtime components exercised for critical scenarios).
 - Fallback readiness is validated in policy and confirmed by fallback eval scenario evidence.
 - Kill-switch readiness confirms production kill-switch is disabled.
 

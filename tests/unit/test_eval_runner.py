@@ -115,6 +115,27 @@ def test_eval_outputs_include_decision_logs_and_concise_summaries(tmp_path) -> N
     assert "tool_decision" in tool_router_only.evidence["decision_log"]
 
 
+def test_eval_outputs_include_runtime_realism_evidence_and_component_coverage(tmp_path) -> None:
+    runner = SecurityEvalRunner(suite_name="security-realism")
+    result = runner.run("evals/scenarios/security_baseline.json", output_dir=tmp_path)
+
+    by_id = {item.scenario_id: item for item in result.scenario_results}
+    full_runtime = by_id["prompt_injection_direct"]
+    router_only = by_id["forbidden_tool_argument_attempt"]
+
+    assert "runtime_components" in full_runtime.evidence
+    assert "simulated_dependencies" in full_runtime.evidence
+    assert "realism_notes" in full_runtime.evidence
+    assert full_runtime.evidence["runtime_components_exercised"]["orchestrator"] is True
+    assert full_runtime.evidence["runtime_components_exercised"]["policy"] is True
+    assert full_runtime.evidence["runtime_components_exercised"]["retrieval"] is True
+    assert full_runtime.evidence["runtime_components_exercised"]["audit_logging"] is True
+
+    assert router_only.evidence["runtime_components_exercised"]["orchestrator"] is False
+    assert router_only.evidence["runtime_components_exercised"]["policy"] is True
+    assert router_only.evidence["runtime_components_exercised"]["tool_routing"] is True
+
+
 def test_tool_execution_scenarios_report_execution_state_and_results(tmp_path) -> None:
     runner = SecurityEvalRunner(suite_name="security-tool-exec")
     result = runner.run("evals/scenarios/security_baseline.json", output_dir=tmp_path)

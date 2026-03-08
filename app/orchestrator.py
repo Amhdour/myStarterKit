@@ -131,46 +131,77 @@ class SupportAgentOrchestrator:
 
             tool_decisions: tuple[ToolDecision, ...] = tuple()
             if tool_policy_decision.allow:
-                allowlisted = list(self.tool_registry.list_allowlisted())
                 policy_allowed_tools = tool_policy_decision.constraints.get("allowed_tools")
-                if isinstance(policy_allowed_tools, list):
-                    policy_allowed_set = {name for name in policy_allowed_tools if isinstance(name, str) and name}
-                    allowlisted = [tool for tool in allowlisted if tool.name in policy_allowed_set]
-
-                tool_decisions = tuple(
-                    self.tool_router.route(
-                        ToolInvocation(
-                            request_id=request.request_id,
-                            actor_id=context.actor_id,
-                            tenant_id=context.tenant_id,
-                            tool_name=tool.name,
-                            action="propose",
-                            arguments={"draft_answer_preview_length": len(draft_answer)},
-                            confirmed=False,
-                        )
+                if not isinstance(policy_allowed_tools, list):
+                    self._emit(
+                        context=context,
+                        event_type=DENY_EVENT,
+                        payload={"stage": "tools.route", "reason": "policy missing allowed_tools constraint"},
                     )
-                    for tool in allowlisted
-                )
-                self._emit(
-                    context=context,
-                    event_type=TOOL_EXECUTION_ATTEMPT_EVENT,
-                    payload={"attempted_tools": [tool.name for tool in allowlisted], "attempt_count": len(allowlisted)},
-                )
-                self._emit(context=context, event_type=TOOL_DECISION_EVENT, payload={"decisions": [decision.status for decision in tool_decisions]})
+                    response = self._blocked_response(request, context, policy_checks, "policy missing allowed_tools constraint")
+                    self._emit_request_end(context=context, status=response.status)
+                    return response
 
-                for decision in tool_decisions:
-                    if decision.status == REQUIRE_CONFIRMATION_DECISION:
+                policy_allowed_set = {name for name in policy_allowed_tools if isinstance(name, str) and name}
+                if len(policy_allowed_set) == 0:
+                    if tool_policy_decision.fallback_to_rag:
                         self._emit(
                             context=context,
-                            event_type=CONFIRMATION_REQUIRED_EVENT,
-                            payload={"tool_name": decision.tool_name, "reason": decision.reason},
+                            event_type=FALLBACK_EVENT,
+                            payload={"mode": "rag_only", "reason": "policy allowed_tools is empty"},
                         )
-                    if decision.status == DENY_DECISION:
+                        tool_decisions = tuple()
+                    else:
                         self._emit(
                             context=context,
                             event_type=DENY_EVENT,
-                            payload={"stage": "tool.route", "tool_name": decision.tool_name, "reason": decision.reason},
+                            payload={"stage": "tools.route", "reason": "policy allowed_tools is empty"},
                         )
+                        response = self._blocked_response(request, context, policy_checks, "policy allowed_tools is empty")
+                        self._emit_request_end(context=context, status=response.status)
+                        return response
+                else:
+                    if hasattr(self.tool_registry, "list_registered"):
+                        registered = list(self.tool_registry.list_registered())
+                    else:
+                        registered = list(self.tool_registry.list_allowlisted())
+
+                    allowlisted = [tool for tool in registered if tool.name in policy_allowed_set]
+
+                    tool_decisions = tuple(
+                        self.tool_router.route(
+                            ToolInvocation(
+                                request_id=request.request_id,
+                                actor_id=context.actor_id,
+                                tenant_id=context.tenant_id,
+                                tool_name=tool.name,
+                                action="propose",
+                                arguments={"draft_answer_preview_length": len(draft_answer)},
+                                confirmed=False,
+                            )
+                        )
+                        for tool in allowlisted
+                    )
+                    self._emit(
+                        context=context,
+                        event_type=TOOL_EXECUTION_ATTEMPT_EVENT,
+                        payload={"attempted_tools": [tool.name for tool in allowlisted], "attempt_count": len(allowlisted)},
+                    )
+                    self._emit(context=context, event_type=TOOL_DECISION_EVENT, payload={"decisions": [decision.status for decision in tool_decisions]})
+
+                    for decision in tool_decisions:
+                        if decision.status == REQUIRE_CONFIRMATION_DECISION:
+                            self._emit(
+                                context=context,
+                                event_type=CONFIRMATION_REQUIRED_EVENT,
+                                payload={"tool_name": decision.tool_name, "reason": decision.reason},
+                            )
+                        if decision.status == DENY_DECISION:
+                            self._emit(
+                                context=context,
+                                event_type=DENY_EVENT,
+                                payload={"stage": "tool.route", "tool_name": decision.tool_name, "reason": decision.reason},
+                            )
             elif tool_policy_decision.fallback_to_rag:
                 self._emit(
                     context=context,
