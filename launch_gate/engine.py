@@ -34,7 +34,7 @@ class LaunchGateConfig:
     )
     policy_path: str = "policies/bundles/default/policy.json"
     audit_log_path: str = "artifacts/logs/audit.jsonl"
-    replay_artifact_glob: str = "artifacts/logs/replay*.json"
+    replay_artifact_glob: str = "artifacts/logs/replay/*.replay.json"
     eval_summary_glob: str = "artifacts/logs/evals/*.summary.json"
     eval_jsonl_glob: str = "artifacts/logs/evals/*.jsonl"
     min_eval_pass_rate: float = 0.9
@@ -68,6 +68,14 @@ class LaunchGateConfig:
     required_fallback_scenario_id: str = "fallback_to_rag_verification"
     require_fallback_ready: bool = True
     require_replay_artifact: bool = True
+
+
+@dataclass(frozen=True)
+class EvalEvidenceBundle:
+    summary: dict
+    summary_path: str
+    jsonl_records: tuple[dict, ...]
+    jsonl_path: str
 
 
 @dataclass
@@ -110,8 +118,8 @@ class SecurityLaunchGate:
         }
         residual_checks = {"telemetry_evidence", "replay_evidence", "fallback_readiness"}
 
-        blockers = [check.details for check in checks if check.check_name in blocker_checks and not check.passed]
-        residual_risks = [check.details for check in checks if check.check_name in residual_checks and not check.passed]
+        blockers = [self._render_issue(check) for check in checks if check.check_name in blocker_checks and not check.passed]
+        residual_risks = [self._render_issue(check) for check in checks if check.check_name in residual_checks and not check.passed]
 
         if blockers:
             status = NO_GO_STATUS
@@ -133,6 +141,17 @@ class SecurityLaunchGate:
             residual_risks=tuple(residual_risks),
             summary=summary,
         )
+
+    def _render_issue(self, check: GateCheckResult) -> str:
+        evidence_ref = ""
+        for key in ("policy_path", "audit_path", "summary_path", "eval_jsonl_path", "replay_path"):
+            value = check.evidence.get(key)
+            if isinstance(value, str) and value:
+                evidence_ref = value
+                break
+        if evidence_ref:
+            return f"{check.check_name}: {check.details} (evidence={evidence_ref})"
+        return f"{check.check_name}: {check.details}"
 
     def _build_scorecard_category(
         self,
@@ -255,19 +274,19 @@ class SecurityLaunchGate:
         )
 
     def _check_tool_router_enforcement_evidence(self) -> GateCheckResult:
-        eval_records, source = self._load_latest_eval_jsonl_records()
-        if eval_records is None:
+        bundle = self._load_latest_eval_evidence_bundle()
+        if bundle is None:
             return GateCheckResult(
                 check_name="tool_router_enforcement_evidence",
                 status=MISSING_CHECK_STATUS,
                 passed=False,
-                details="tool-router enforcement evidence missing: eval jsonl missing or unreadable",
-                evidence={"eval_jsonl_glob": self.config.eval_jsonl_glob, "matched_file": source},
+                details="tool-router enforcement evidence missing: aligned eval summary+jsonl not found",
+                evidence={"eval_summary_glob": self.config.eval_summary_glob, "eval_jsonl_glob": self.config.eval_jsonl_glob},
             )
 
         by_id = {
             str(item.get("scenario_id", "")): str(item.get("outcome", ""))
-            for item in eval_records
+            for item in bundle.jsonl_records
             if isinstance(item, dict)
         }
 
@@ -289,7 +308,8 @@ class SecurityLaunchGate:
             passed=passed,
             details=details,
             evidence={
-                "eval_jsonl_path": source,
+                "summary_path": bundle.summary_path,
+                "eval_jsonl_path": bundle.jsonl_path,
                 "required_scenarios": dict(self.config.required_tool_router_scenario_outcomes),
                 "scenario_outcomes": {k: by_id.get(k, "missing") for k in self.config.required_tool_router_scenario_outcomes},
                 "missing_or_mismatched": missing_or_mismatched,
@@ -346,8 +366,18 @@ class SecurityLaunchGate:
 
         event_types = [record.get("event_type") for record in records if isinstance(record, dict)]
         missing_types = [item for item in self.config.required_audit_event_types if item not in event_types]
+        lifecycle_events = [
+            item
+            for item in records
+            if isinstance(item, dict) and str(item.get("event_type")) in {"request.start", "request.end", "policy.decision"}
+        ]
+        missing_identity_fields = [
+            idx
+            for idx, event in enumerate(lifecycle_events)
+            if not event.get("request_id") or not event.get("actor_id") or not event.get("tenant_id")
+        ]
 
-        passed = len(records) >= self.config.min_audit_events and len(missing_types) == 0
+        passed = len(records) >= self.config.min_audit_events and len(missing_types) == 0 and len(missing_identity_fields) == 0
         details = "telemetry evidence satisfied" if passed else "telemetry evidence incomplete"
         return GateCheckResult(
             check_name="telemetry_evidence",
@@ -360,6 +390,7 @@ class SecurityLaunchGate:
                 "event_count": len(records),
                 "required_min": self.config.min_audit_events,
                 "missing_event_types": missing_types,
+                "identity_field_violations": len(missing_identity_fields),
             },
         )
 
@@ -398,8 +429,10 @@ class SecurityLaunchGate:
         missing_event_types = [
             event_type for event_type in self.config.required_replay_event_types if int(event_type_counts.get(event_type, 0) or 0) <= 0
         ]
+        coverage = artifact.get("coverage") if isinstance(artifact.get("coverage"), dict) else {}
+        request_complete = bool(coverage.get("request_lifecycle_complete", False))
 
-        passed = artifact.get("replay_version") == "1" and len(missing_event_types) == 0
+        passed = artifact.get("replay_version") == "1" and len(missing_event_types) == 0 and request_complete
         details = "replay evidence satisfied" if passed else "replay evidence incomplete or invalid"
         return GateCheckResult(
             check_name="replay_evidence",
@@ -411,31 +444,22 @@ class SecurityLaunchGate:
                 "replay_version": artifact.get("replay_version"),
                 "missing_event_types": missing_event_types,
                 "event_type_counts": event_type_counts,
+                "request_lifecycle_complete": request_complete,
             },
         )
 
     def _check_eval_suite_evidence(self) -> GateCheckResult:
-        summary_files = sorted(self.repo_root.glob(self.config.eval_summary_glob))
-        if not summary_files:
+        bundle = self._load_latest_eval_evidence_bundle()
+        if bundle is None:
             return GateCheckResult(
                 check_name="eval_suite_evidence",
                 status=MISSING_CHECK_STATUS,
                 passed=False,
-                details="eval suite evidence missing",
-                evidence={"glob": self.config.eval_summary_glob, "matched_files": []},
+                details="eval suite evidence missing: aligned eval summary+jsonl not found",
+                evidence={"summary_glob": self.config.eval_summary_glob, "jsonl_glob": self.config.eval_jsonl_glob},
             )
 
-        latest = summary_files[-1]
-        summary = _read_json_file(latest)
-        if summary is None:
-            return GateCheckResult(
-                check_name="eval_suite_evidence",
-                status=MISSING_CHECK_STATUS,
-                passed=False,
-                details="eval suite evidence unreadable",
-                evidence={"summary_path": str(latest)},
-            )
-
+        summary = bundle.summary
         total = int(summary.get("total", 0)) if isinstance(summary.get("total", 0), int) else 0
         passed_count = int(summary.get("passed_count", 0)) if isinstance(summary.get("passed_count", 0), int) else 0
         pass_rate = (passed_count / total) if total > 0 else 0.0
@@ -444,7 +468,18 @@ class SecurityLaunchGate:
         fail_count = int(outcomes.get("fail", 0)) if isinstance(outcomes.get("fail", 0), int) else 0
         inconclusive_count = int(outcomes.get("inconclusive", 0)) if isinstance(outcomes.get("inconclusive", 0), int) else 0
 
-        passed = total > 0 and pass_rate >= self.config.min_eval_pass_rate and fail_count == 0 and inconclusive_count == 0
+        calculated_total = len(bundle.jsonl_records)
+        calculated_passed = sum(1 for item in bundle.jsonl_records if str(item.get("outcome", "")) == "pass")
+        summary_matches_jsonl = total == calculated_total and passed_count == calculated_passed
+
+        passed = (
+            total > 0
+            and pass_rate >= self.config.min_eval_pass_rate
+            and fail_count == 0
+            and inconclusive_count == 0
+            and bool(summary.get("passed", False))
+            and summary_matches_jsonl
+        )
         details = "eval suite evidence satisfied" if passed else "eval suite evidence failed threshold/outcome health"
         return GateCheckResult(
             check_name="eval_suite_evidence",
@@ -452,13 +487,18 @@ class SecurityLaunchGate:
             passed=passed,
             details=details,
             evidence={
-                "summary_path": str(latest),
+                "summary_path": bundle.summary_path,
+                "eval_jsonl_path": bundle.jsonl_path,
                 "total": total,
                 "passed_count": passed_count,
                 "pass_rate": pass_rate,
                 "required_min_pass_rate": self.config.min_eval_pass_rate,
                 "fail": fail_count,
                 "inconclusive": inconclusive_count,
+                "summary_passed": bool(summary.get("passed", False)),
+                "jsonl_record_count": calculated_total,
+                "jsonl_pass_count": calculated_passed,
+                "summary_matches_jsonl": summary_matches_jsonl,
             },
         )
 
@@ -484,19 +524,19 @@ class SecurityLaunchGate:
                 evidence={"policy_path": str(policy_path), "policy_exists": False},
             )
 
-        eval_records, eval_source = self._load_latest_eval_jsonl_records()
-        if eval_records is None:
+        bundle = self._load_latest_eval_evidence_bundle()
+        if bundle is None:
             return GateCheckResult(
                 check_name="fallback_readiness",
                 status=MISSING_CHECK_STATUS,
                 passed=False,
-                details="fallback readiness missing: eval jsonl missing or unreadable",
-                evidence={"eval_jsonl_glob": self.config.eval_jsonl_glob, "matched_file": eval_source},
+                details="fallback readiness missing: aligned eval summary+jsonl not found",
+                evidence={"eval_summary_glob": self.config.eval_summary_glob, "eval_jsonl_glob": self.config.eval_jsonl_glob},
             )
 
         by_id = {
             str(item.get("scenario_id", "")): str(item.get("outcome", ""))
-            for item in eval_records
+            for item in bundle.jsonl_records
             if isinstance(item, dict)
         }
         fallback_outcome = by_id.get(self.config.required_fallback_scenario_id, "missing")
@@ -521,21 +561,40 @@ class SecurityLaunchGate:
                 "policy_path": str(policy_path),
                 "policy_valid": runtime_policy.valid,
                 "fallback_to_rag": runtime_policy.fallback_to_rag,
-                "eval_jsonl_path": eval_source,
+                "summary_path": bundle.summary_path,
+                "eval_jsonl_path": bundle.jsonl_path,
                 "required_fallback_scenario": self.config.required_fallback_scenario_id,
                 "fallback_scenario_outcome": fallback_outcome,
             },
         )
 
-    def _load_latest_eval_jsonl_records(self) -> tuple[list[dict] | None, str | None]:
-        files = sorted(self.repo_root.glob(self.config.eval_jsonl_glob))
-        if not files:
-            return None, None
-        latest = files[-1]
-        records = _read_jsonl(latest)
-        if len(records) == 0:
-            return None, str(latest)
-        return records, str(latest)
+    def _load_latest_eval_evidence_bundle(self) -> EvalEvidenceBundle | None:
+        summary_files = sorted(self.repo_root.glob(self.config.eval_summary_glob))
+        if not summary_files:
+            return None
+
+        for summary_path in reversed(summary_files):
+            summary = _read_json_file(summary_path)
+            if summary is None:
+                continue
+
+            base = summary_path.name.removesuffix(".summary.json")
+            jsonl_path = self.repo_root / "artifacts" / "logs" / "evals" / f"{base}.jsonl"
+            if not jsonl_path.is_file():
+                continue
+
+            records = _read_jsonl(jsonl_path)
+            if len(records) == 0:
+                continue
+
+            return EvalEvidenceBundle(
+                summary=summary,
+                summary_path=str(summary_path),
+                jsonl_records=tuple(records),
+                jsonl_path=str(jsonl_path),
+            )
+
+        return None
 
 
 def _read_jsonl(path: Path) -> list[dict]:

@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field, replace
 from typing import Sequence
 
-from policies.contracts import PolicyEngine
+from policies.contracts import PolicyDecision, PolicyEngine
 from retrieval.contracts import (
     RetrievalDocument,
     RetrievalFilterHook,
@@ -46,59 +46,50 @@ class SecureRetrievalService(Retriever):
         if any(source_id not in tenant_registered_sources for source_id in requested_sources):
             return tuple()
 
-        effective_allowed_sources = tuple(requested_sources)
-        effective_top_k = query.top_k
-        require_trust_metadata = True
-        require_provenance = True
-        allowed_trust_domains: tuple[str, ...] = ("internal",)
+        if self.policy_engine is None:
+            return tuple()
 
-        if self.policy_engine is not None:
-            try:
-                decision = self.policy_engine.evaluate(
-                    request_id=query.request_id,
-                    action="retrieval.search",
-                    context={"tenant_id": query.tenant_id},
-                )
-            except Exception:
-                return tuple()
+        decision = self._evaluate_policy(query)
+        if decision is None or not decision.allow:
+            return tuple()
 
-            if not decision.allow:
-                return tuple()
+        constrained_sources = decision.constraints.get("allowed_source_ids")
+        if not isinstance(constrained_sources, list) or len(constrained_sources) == 0:
+            return tuple()
 
-            constrained_sources = decision.constraints.get("allowed_source_ids")
-            if not isinstance(constrained_sources, list) or len(constrained_sources) == 0:
-                return tuple()
+        constrained_set = {
+            source
+            for source in constrained_sources
+            if isinstance(source, str) and source and source in tenant_registered_sources
+        }
+        if len(constrained_set) == 0:
+            return tuple()
 
-            constrained_set = {source for source in constrained_sources if isinstance(source, str) and source}
-            if query.allowed_source_ids:
-                if any(source not in constrained_set for source in requested_sources):
-                    return tuple()
-                effective_allowed_sources = tuple(source for source in requested_sources if source in constrained_set)
-            else:
-                effective_allowed_sources = tuple(constrained_set)
-            if len(effective_allowed_sources) == 0:
-                return tuple()
+        if any(source not in constrained_set for source in requested_sources):
+            return tuple()
 
-            top_k_cap = decision.constraints.get("top_k_cap")
-            if isinstance(top_k_cap, int) and top_k_cap > 0:
-                effective_top_k = min(effective_top_k, top_k_cap)
-
-            if "require_trust_metadata" in decision.constraints:
-                require_trust_metadata = bool(decision.constraints.get("require_trust_metadata"))
-            if "require_provenance" in decision.constraints:
-                require_provenance = bool(decision.constraints.get("require_provenance"))
-
-            constrained_domains = decision.constraints.get("allowed_trust_domains")
-            if isinstance(constrained_domains, list):
-                parsed_domains = tuple(
-                    domain.strip().lower() for domain in constrained_domains if isinstance(domain, str) and domain.strip()
-                )
-                if len(parsed_domains) == 0:
-                    return tuple()
-                allowed_trust_domains = parsed_domains
-
+        effective_allowed_sources = tuple(source for source in requested_sources if source in constrained_set)
         if len(effective_allowed_sources) == 0:
             return tuple()
+
+        effective_top_k = query.top_k
+        top_k_cap = decision.constraints.get("top_k_cap")
+        if isinstance(top_k_cap, int) and top_k_cap > 0:
+            effective_top_k = min(effective_top_k, top_k_cap)
+
+        # Trust metadata and provenance remain required safe defaults even if policy omits them.
+        require_trust_metadata = True
+        require_provenance = True
+
+        allowed_trust_domains: tuple[str, ...] = ("internal",)
+        constrained_domains = decision.constraints.get("allowed_trust_domains")
+        if isinstance(constrained_domains, list):
+            parsed_domains = tuple(
+                domain.strip().lower() for domain in constrained_domains if isinstance(domain, str) and domain.strip()
+            )
+            if len(parsed_domains) == 0:
+                return tuple()
+            allowed_trust_domains = parsed_domains
 
         effective_query = RetrievalQuery(
             request_id=query.request_id,
@@ -134,6 +125,18 @@ class SecureRetrievalService(Retriever):
                 break
 
         return tuple(accepted)
+
+    def _evaluate_policy(self, query: RetrievalQuery) -> PolicyDecision | None:
+        if self.policy_engine is None:
+            return None
+        try:
+            return self.policy_engine.evaluate(
+                request_id=query.request_id,
+                action="retrieval.search",
+                context={"tenant_id": query.tenant_id},
+            )
+        except Exception:
+            return None
 
     def _is_valid_registered_source(self, source: SourceRegistration) -> bool:
         if not source.source_id or not source.tenant_id:

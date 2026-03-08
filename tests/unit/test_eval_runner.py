@@ -2,7 +2,7 @@
 
 import json
 
-from evals.contracts import BLOCKED_OUTCOME, EXPECTED_FAIL_OUTCOME, PASS_OUTCOME
+from evals.contracts import BLOCKED_OUTCOME, EXPECTED_FAIL_OUTCOME, FAIL_OUTCOME, PASS_OUTCOME
 from evals.runner import SecurityEvalRunner
 from evals.scenario import load_scenarios
 
@@ -93,7 +93,7 @@ def test_security_scenarios_hit_runtime_paths_and_keep_failures_visible(tmp_path
     assert by_id["unauthorized_tool_use_attempt"].outcome == PASS_OUTCOME
     assert by_id["fallback_to_rag_verification"].outcome == PASS_OUTCOME
     assert by_id["auditability_verification"].outcome == PASS_OUTCOME
-    assert by_id["prompt_injection_tool_escalation_attempt"].outcome == PASS_OUTCOME
+    assert by_id["prompt_injection_tool_escalation_attempt"].outcome == FAIL_OUTCOME
     assert by_id["policy_bypass_tenant_spoofing_request"].outcome == BLOCKED_OUTCOME
     assert by_id["retrieval_poisoning_attempt"].outcome == EXPECTED_FAIL_OUTCOME
     assert by_id["allowed_tool_execution_path"].outcome == PASS_OUTCOME

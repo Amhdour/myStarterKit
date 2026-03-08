@@ -19,3 +19,22 @@ def test_registry_execute_called_only_by_router_in_runtime_code() -> None:
             offenders.append(rel)
 
     assert not offenders, f"Tool registry execution bypass risk: unexpected call sites {offenders}"
+
+
+ALLOWED_EXECUTION_GUARD_ENTRYPOINTS = {
+    "tools/router.py",
+    "tools/execution_guard.py",
+}
+
+
+def test_execution_guard_context_entry_only_used_by_router() -> None:
+    offenders: list[str] = []
+    for path in Path('.').rglob('*.py'):
+        rel = path.as_posix()
+        if rel.startswith('.git/') or '/tests/' in f'/{rel}' or rel.startswith('tests/'):
+            continue
+        text = path.read_text(encoding='utf-8')
+        if 'enter_router_execution_context(' in text and rel not in ALLOWED_EXECUTION_GUARD_ENTRYPOINTS:
+            offenders.append(rel)
+
+    assert not offenders, f"Execution guard bypass risk: unexpected context-entry call sites {offenders}"

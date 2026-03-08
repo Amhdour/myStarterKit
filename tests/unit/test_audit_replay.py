@@ -231,3 +231,50 @@ def test_replay_artifact_decision_summary_includes_policy_retrieval_tool_deny_fa
     assert summary["tool_decisions"][0]["decisions"] == ["deny"]
     assert summary["deny_events"][0]["stage"] == "tool.route"
     assert summary["fallback_events"][0]["mode"] == "rag_only"
+
+
+def test_replay_artifact_sets_lifecycle_and_core_decision_coverage_flags() -> None:
+    sink = InMemoryAuditSink()
+    trace_id = "trace-coverage"
+    for event_type, payload in (
+        (REQUEST_START_EVENT, {"session_id": "s1"}),
+        ("policy.decision", {"action": "retrieval.search", "allow": True, "reason": "ok", "risk_tier": "low"}),
+        ("retrieval.decision", {"document_count": 1, "top_k": 1, "allowed_source_ids": ["kb-main"]}),
+        ("tool.decision", {"decisions": ["allow"]}),
+        (REQUEST_END_EVENT, {"status": "ok"}),
+    ):
+        sink.emit(
+            create_audit_event(
+                trace_id=trace_id,
+                request_id="req-coverage",
+                actor_id="actor-1",
+                tenant_id="tenant-a",
+                event_type=event_type,
+                payload=payload,
+            )
+        )
+
+    artifact = build_replay_artifact(sink.events)
+
+    assert artifact.coverage["request_lifecycle_complete"] is True
+    assert artifact.coverage["decision_replay_core_complete"] is True
+
+
+def test_replay_artifact_redacts_sensitive_payload_fields() -> None:
+    sink = InMemoryAuditSink()
+    sink.emit(
+        create_audit_event(
+            trace_id="trace-redact",
+            request_id="req-redact",
+            actor_id="actor-1",
+            tenant_id="tenant-a",
+            event_type=DENY_EVENT,
+            payload={"stage": "tool.route", "raw_password": "topsecret", "ssn": "123-45-6789"},
+        )
+    )
+
+    artifact = build_replay_artifact(sink.events)
+    timeline_payload = artifact.timeline[0]["payload"]
+
+    assert timeline_payload["raw_password"] == "[redacted]"
+    assert timeline_payload["ssn"] == "[redacted]"

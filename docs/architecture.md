@@ -6,6 +6,11 @@
 > See `docs/threat_model.md` for concrete threats, implemented controls, and residual risk.
 > See `docs/security_guarantees.md` for implementation-aligned invariants and their evidence/limitations.
 
+## Trust Boundary Reference
+
+Use `docs/trust_boundaries.md` as the boundary-level companion to this architecture doc.
+It maps each implemented boundary to: (1) crossing data, (2) failure modes, (3) controls, and (4) expected audit events.
+
 ## Design Goals
 - Policy-first orchestration.
 - RAG-first response generation.

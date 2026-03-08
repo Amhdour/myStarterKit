@@ -4,6 +4,8 @@ This document visualizes the **implemented** runtime architecture and trust boun
 
 For boundary-by-boundary control/risk/logging details, see `docs/trust_boundaries.md`.
 
+For concrete implemented threats, controls, and residual gaps, see `docs/threat_model.md`.
+
 ## 1) System Architecture Overview
 
 ```mermaid

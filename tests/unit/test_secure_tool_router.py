@@ -15,10 +15,35 @@ from tools.registry import InMemoryToolRegistry
 from tools.router import SecureToolRouter
 
 
-def _router_with_tool(tool: ToolDescriptor, executor=None) -> SecureToolRouter:
+class AllowInvokePolicyEngine:
+    class _Decision:
+        def __init__(self, *, confirmation_required: bool = False, rate_limit_per_minute: int | None = None):
+            self.allow = True
+            self.reason = "allowed"
+            constraints: dict[str, object] = {"confirmation_required": confirmation_required}
+            if rate_limit_per_minute is not None:
+                constraints["rate_limit_per_minute"] = rate_limit_per_minute
+            self.constraints = constraints
+
+    def __init__(self, *, confirmation_required: bool = False, rate_limit_per_minute: int | None = None):
+        self.confirmation_required = confirmation_required
+        self.rate_limit_per_minute = rate_limit_per_minute
+
+    def evaluate(self, request_id: str, action: str, context: dict):
+        return self._Decision(
+            confirmation_required=self.confirmation_required,
+            rate_limit_per_minute=self.rate_limit_per_minute,
+        )
+
+
+def _router_with_tool(tool: ToolDescriptor, executor=None, policy_engine=None) -> SecureToolRouter:
     registry = InMemoryToolRegistry()
     registry.register(tool, executor=executor)
-    return SecureToolRouter(registry=registry, rate_limiter=InMemoryToolRateLimiter())
+    return SecureToolRouter(
+        registry=registry,
+        rate_limiter=InMemoryToolRateLimiter(),
+        policy_engine=policy_engine or AllowInvokePolicyEngine(),
+    )
 
 
 def _invocation(*, tool_name: str, arguments: dict[str, object] | None = None, confirmed: bool = False):
@@ -80,6 +105,35 @@ def test_direct_executor_invocation_from_registry_internals_is_blocked() -> None
 
     with pytest.raises(DirectToolExecutionDeniedError):
         executor(_invocation(tool_name="ticket_lookup"))
+
+
+
+def test_cannot_force_execution_by_manually_entering_router_context() -> None:
+    from tools.execution_guard import enter_router_execution_context
+
+    registry = InMemoryToolRegistry()
+    registry.register(
+        ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True),
+        executor=lambda _: {"ok": True},
+    )
+    router = SecureToolRouter(registry=registry, rate_limiter=InMemoryToolRateLimiter())
+
+    with pytest.raises(DirectToolExecutionDeniedError):
+        _ = enter_router_execution_context(router._execution_secret)
+
+def test_tool_router_fails_closed_when_policy_engine_missing() -> None:
+    registry = InMemoryToolRegistry()
+    registry.register(
+        ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True),
+        executor=lambda _: {"ok": True},
+    )
+    router = SecureToolRouter(registry=registry, rate_limiter=InMemoryToolRateLimiter(), policy_engine=None)
+
+    decision = router.route(_invocation(tool_name="ticket_lookup"))
+
+    assert decision.status == DENY_DECISION
+    assert "policy engine unavailable" in decision.reason
+
 
 def test_forbidden_tool_denial() -> None:
     router = _router_with_tool(

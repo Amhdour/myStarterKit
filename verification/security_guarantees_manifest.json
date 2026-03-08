@@ -1,0 +1,95 @@
+{
+  "invariants": [
+    {
+      "id": "tool_router_cannot_be_bypassed",
+      "enforcement_locations": [
+        "tools/execution_guard.py",
+        "tools/registry.py",
+        "tools/router.py"
+      ],
+      "test_coverage": [
+        "tests/integration/test_tool_execution_path_enforced.py",
+        "tests/integration/test_tool_executor_bypass_path_enforced.py",
+        "tests/unit/test_secure_tool_router.py"
+      ],
+      "artifact_evidence": [
+        "artifacts/logs/evals/*.jsonl"
+      ]
+    },
+    {
+      "id": "policy_governs_runtime_behavior",
+      "enforcement_locations": [
+        "app/orchestrator.py",
+        "tools/router.py",
+        "retrieval/service.py",
+        "policies/engine.py"
+      ],
+      "test_coverage": [
+        "tests/unit/test_policy_engine.py",
+        "tests/unit/test_policy_mutation_runtime.py",
+        "tests/unit/test_orchestration_flow.py"
+      ],
+      "artifact_evidence": [
+        "artifacts/logs/audit.jsonl"
+      ]
+    },
+    {
+      "id": "retrieval_enforces_boundaries",
+      "enforcement_locations": [
+        "retrieval/service.py",
+        "retrieval/registry.py"
+      ],
+      "test_coverage": [
+        "tests/unit/test_secure_retrieval_service.py",
+        "tests/unit/test_multitenant_retrieval_audit.py"
+      ],
+      "artifact_evidence": [
+        "artifacts/logs/audit.jsonl"
+      ]
+    },
+    {
+      "id": "evals_hit_real_flows",
+      "enforcement_locations": [
+        "evals/runner.py",
+        "evals/runtime.py",
+        "evals/scenarios/security_baseline.json"
+      ],
+      "test_coverage": [
+        "tests/unit/test_eval_runner.py"
+      ],
+      "artifact_evidence": [
+        "artifacts/logs/evals/*.jsonl",
+        "artifacts/logs/evals/*.summary.json",
+        "artifacts/logs/replay/*.replay.json"
+      ]
+    },
+    {
+      "id": "launch_gate_checks_real_evidence",
+      "enforcement_locations": [
+        "launch_gate/engine.py"
+      ],
+      "test_coverage": [
+        "tests/unit/test_launch_gate.py"
+      ],
+      "artifact_evidence": [
+        "artifacts/logs/evals/*.jsonl",
+        "artifacts/logs/evals/*.summary.json",
+        "artifacts/logs/replay/*.replay.json",
+        "artifacts/logs/audit.jsonl"
+      ]
+    },
+    {
+      "id": "telemetry_supports_replay",
+      "enforcement_locations": [
+        "telemetry/audit/replay.py",
+        "telemetry/audit/contracts.py"
+      ],
+      "test_coverage": [
+        "tests/unit/test_audit_replay.py"
+      ],
+      "artifact_evidence": [
+        "artifacts/logs/replay/*.replay.json"
+      ]
+    }
+  ]
+}
