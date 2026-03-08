@@ -150,3 +150,18 @@ def test_tool_execution_scenarios_report_execution_state_and_results(tmp_path) -
     assert denied.evidence["execution_performed"] is False
     assert confirmation.evidence["execution_performed"] is False
     assert confirmation.evidence["tool_decision_status"] == "require_confirmation"
+
+
+def test_eval_runner_supports_fixed_stamp_for_reproducible_artifact_names(tmp_path) -> None:
+    runner = SecurityEvalRunner(suite_name="security-deterministic")
+
+    runner.run(
+        "evals/scenarios/security_baseline.json",
+        output_dir=tmp_path,
+        stamp="20260101T000000Z",
+    )
+
+    assert (tmp_path / "security-deterministic-20260101T000000Z.jsonl").is_file()
+    assert (tmp_path / "security-deterministic-20260101T000000Z.summary.json").is_file()
+    replay_dir = tmp_path.parent / "replay"
+    assert list(replay_dir.glob("security-deterministic-20260101T000000Z-*.replay.json"))

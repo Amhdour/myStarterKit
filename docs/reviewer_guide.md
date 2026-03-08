@@ -1,100 +1,55 @@
-# Reviewer Trust Pack (Quick Credibility Walkthrough)
+# Reviewer Trust Pack (Quick Verification Path)
 
-Use this when you need to quickly answer: **“Is this starter kit security-credible, and can I verify that from code + evidence?”**
+Use this to answer quickly: **"Are security claims traceable to code, tests, and artifacts?"**
 
-## 1) What problem this repo solves
+## 1) Canonical claim source
 
-This starter kit gives a secure baseline for support-agent systems that combine:
-- policy-aware orchestration,
-- retrieval-augmented generation (RAG),
-- mediated tool routing,
-- structured telemetry + replay,
-- evaluation + launch gating based on artifacts.
+- Release-relevant guarantees are defined in `verification/security_guarantees_manifest.json`.
+- Human-readable mapping is in `docs/security_guarantees.md`.
+- Machine verification output is written to:
+  - `artifacts/logs/verification/security_guarantees.summary.json`
+  - `artifacts/logs/verification/security_guarantees.summary.md`
 
-It is designed to make claims verifiable via tests and generated evidence artifacts.
+## 2) Claim trace matrix (reviewer shortcut)
 
-## 2) Core guarantees (what is actually implemented)
+| Invariant ID | Enforcement | Tests | Evidence artifacts |
+|---|---|---|---|
+| `tool_router_cannot_be_bypassed` | `tools/execution_guard.py`, `tools/registry.py`, `tools/router.py` | `tests/integration/test_tool_execution_path_enforced.py`, `tests/integration/test_tool_executor_bypass_path_enforced.py`, `tests/unit/test_secure_tool_router.py` | `artifacts/logs/evals/*.jsonl` |
+| `policy_governs_runtime_behavior` | `app/orchestrator.py`, `tools/router.py`, `retrieval/service.py`, `policies/engine.py` | `tests/unit/test_policy_engine.py`, `tests/unit/test_policy_mutation_runtime.py`, `tests/unit/test_orchestration_flow.py` | `artifacts/logs/audit.jsonl` |
+| `retrieval_enforces_boundaries` | `retrieval/service.py`, `retrieval/registry.py` | `tests/unit/test_secure_retrieval_service.py`, `tests/unit/test_multitenant_retrieval_audit.py` | `artifacts/logs/audit.jsonl` |
+| `evals_hit_real_flows` | `evals/runner.py`, `evals/runtime.py`, `evals/scenarios/security_baseline.json` | `tests/unit/test_eval_runner.py` | `artifacts/logs/evals/*.jsonl`, `artifacts/logs/evals/*.summary.json`, `artifacts/logs/replay/*.replay.json` |
+| `launch_gate_checks_real_evidence` | `launch_gate/engine.py` | `tests/unit/test_launch_gate.py` | `artifacts/logs/evals/*.jsonl`, `artifacts/logs/evals/*.summary.json`, `artifacts/logs/replay/*.replay.json`, `artifacts/logs/audit.jsonl` |
+| `telemetry_supports_replay` | `telemetry/audit/replay.py`, `telemetry/audit/contracts.py` | `tests/unit/test_audit_replay.py` | `artifacts/logs/replay/*.replay.json` |
 
-High-level guarantees are documented in `docs/security_guarantees.md` and enforced in code/tests:
-- tool execution cannot bypass centralized router mediation,
-- policy governs runtime decisions,
-- retrieval enforces tenant/source/trust/provenance boundaries,
-- eval outputs include runtime-flow evidence,
-- launch-gate decisions are artifact-backed,
-- telemetry supports replay/investigation.
+## 3) Review this repo in 5 minutes
 
-## 3) Where primary controls live
-
-- Orchestrator stage/policy gates: `app/orchestrator.py`
-- Retrieval boundary enforcement: `retrieval/service.py`, `retrieval/registry.py`
-- Tool routing + execution guards: `tools/router.py`, `tools/registry.py`, `tools/execution_guard.py`
-- Policy load/validation/evaluation: `policies/loader.py`, `policies/schema.py`, `policies/engine.py`
-- Telemetry/replay: `telemetry/audit/events.py`, `telemetry/audit/sinks.py`, `telemetry/audit/replay.py`
-- Launch-gate readiness checks: `launch_gate/engine.py`
-- Security-guarantees mapping runner: `verification/runner.py`
-
-## 4) Evidence artifacts you can inspect
-
-Primary machine evidence locations:
-- `artifacts/logs/audit.jsonl`
-- `artifacts/logs/replay/*.replay.json`
-- `artifacts/logs/evals/*.jsonl`
-- `artifacts/logs/evals/*.summary.json`
-- `artifacts/logs/verification/security_guarantees.summary.json`
-- `artifacts/logs/verification/security_guarantees.summary.md`
-
-Supporting reviewer docs:
-- `docs/trust_boundaries.md`
-- `docs/threat_model.md`
-- `docs/deployment_architecture.md`
-
-## 5) High-signal tests to run first
-
-- Tool-router bypass resistance:
-  - `tests/integration/test_tool_execution_path_enforced.py`
-  - `tests/integration/test_tool_executor_bypass_path_enforced.py`
-- Policy-governed behavior:
-  - `tests/unit/test_policy_engine.py`
-  - `tests/unit/test_policy_mutation_runtime.py`
-- Retrieval boundaries:
-  - `tests/unit/test_secure_retrieval_service.py`
-  - `tests/unit/test_multitenant_retrieval_audit.py`
-- Telemetry/replay integrity:
-  - `tests/unit/test_audit_replay.py`
-- Launch-gate evidence enforcement:
-  - `tests/unit/test_launch_gate.py`
-- Invariant mapping/verification layer:
-  - `tests/integration/test_security_guarantees_verification.py`
-  - `tests/unit/test_security_guarantees_runner.py`
-
-## 6) Residual risks (explicit)
-
-This baseline does **not** claim:
-- comprehensive output moderation/DLP for model answers,
-- immutable/signed artifact storage,
-- deep retrieval corpus integrity attestation,
-- production IAM/ABAC integration.
-
-See `docs/threat_model.md` and `docs/evidence_pack/residual_risks.md`.
-
-## 7) Quick reviewer workflow (5–10 minutes)
-
-1. Run launch gate:
+1. Regenerate clean evidence set:
    ```bash
-   python -m launch_gate.engine
+   ./scripts/regenerate_core_evidence.sh
    ```
-2. Confirm:
-   - overall status (`go` / `conditional_go` / `no_go`),
-   - blockers,
-   - residual risks,
-   - per-check evidence paths.
-3. Run guarantees verification:
-   ```bash
-   python -m verification.runner
-   ```
-4. Inspect generated summaries:
+2. Inspect guarantees verification summary (`status`, failing invariants, missing evidence globs):
    - `artifacts/logs/verification/security_guarantees.summary.json`
-   - `artifacts/logs/verification/security_guarantees.summary.md`
-5. Spot-check high-signal tests listed above.
+3. Inspect launch readiness output (`status`, blockers, residual_risks):
+   - `artifacts/logs/launch_gate/security-readiness-<STAMP>.json`
+4. Spot-check high-signal tests:
+   - `pytest -q tests/unit/test_launch_gate.py tests/unit/test_audit_replay.py tests/unit/test_secure_tool_router.py`
 
-If these checks line up, the repo’s security claims are backed by concrete enforcement points and artifacts.
+## 4) Interpretation
+
+- `go` requires no blockers and no residual risks.
+- Any failure in release-relevant guarantee verification should appear in `blockers` and prevent `go`.
+- `conditional_go` is for residual risk only, not missing core guarantee proof.
+
+## 5) Explicit non-claims
+
+This baseline does **not** claim immutable artifact signing, full output DLP/moderation, or production IAM integration. See:
+- `docs/threat_model.md`
+- `docs/evidence_pack/residual_risks.md`
+
+
+## 6) Residual risk visibility
+
+Before accepting a trust story, check:
+- `docs/evidence_pack/residual_risks.md` for current known gaps.
+- `docs/threat_model.md` for threat context and assumptions.
+- `docs/evidence_pack/open_issues.md` for unresolved follow-ups.

@@ -1,5 +1,6 @@
 """Reusable security eval and red-team harness."""
 
+import argparse
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -41,13 +42,19 @@ RUNTIME_COMPONENTS = {
 class SecurityEvalRunner:
     suite_name: str = "security-redteam"
 
-    def run(self, scenario_file: str | Path, *, output_dir: str | Path = "artifacts/logs/evals") -> EvalResult:
+    def run(
+        self,
+        scenario_file: str | Path,
+        *,
+        output_dir: str | Path = "artifacts/logs/evals",
+        stamp: str | None = None,
+    ) -> EvalResult:
         scenarios = load_scenarios(scenario_file)
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        resolved_stamp = _resolve_stamp(stamp)
         eval_output_dir = Path(output_dir)
         replay_output_dir = eval_output_dir.parent / "replay"
         scenario_results = tuple(
-            self._run_scenario(scenario, replay_output_dir=replay_output_dir, stamp=stamp)
+            self._run_scenario(scenario, replay_output_dir=replay_output_dir, stamp=resolved_stamp)
             for scenario in scenarios
         )
 
@@ -72,7 +79,7 @@ class SecurityEvalRunner:
             scenario_results=scenario_results,
         )
 
-        self._write_outputs(eval_result, output_dir=eval_output_dir, outcome_counts=outcome_counts, stamp=stamp)
+        self._write_outputs(eval_result, output_dir=eval_output_dir, outcome_counts=outcome_counts, stamp=resolved_stamp)
         return eval_result
 
     def _run_scenario(self, scenario: SecurityScenario, *, replay_output_dir: Path, stamp: str) -> EvalScenarioResult:
@@ -500,7 +507,27 @@ def _evaluate_expectations(expectations: dict, evidence: dict) -> tuple[bool, st
     return True, "all expectations satisfied"
 
 
+def _resolve_stamp(stamp: str | None) -> str:
+    if stamp is None:
+        return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    candidate = str(stamp).strip()
+    if not candidate:
+        raise ValueError("stamp must be non-empty when provided")
+    if any(char.isspace() for char in candidate):
+        raise ValueError("stamp must not contain whitespace")
+    return candidate
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run security eval scenarios and write evidence artifacts.")
+    parser.add_argument("--scenario-file", default="evals/scenarios/security_baseline.json")
+    parser.add_argument("--output-dir", default="artifacts/logs/evals")
+    parser.add_argument("--stamp", default=None)
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = _parse_args()
     runner = SecurityEvalRunner()
-    result = runner.run("evals/scenarios/security_baseline.json")
+    result = runner.run(args.scenario_file, output_dir=args.output_dir, stamp=args.stamp)
     print(result.summary)

@@ -10,16 +10,34 @@ python -m launch_gate.engine
 - `conditional_go`: no critical blockers, but residual risks remain.
 - `no_go`: one or more critical blockers detected.
 
-## Current Gate Checks
-- Mandatory control files present.
-- Policy artifact present, readable, and valid.
-- Retrieval boundary consistency (tenant allowlists aligned with tenant source allowlists + trust/provenance requirements).
-- Tool-router enforcement evidence present in eval scenario outcomes.
-- Production kill-switch state acceptable (disabled).
-- Audit telemetry evidence present with required event coverage.
-- Replay artifact evidence present/valid when required.
-- Eval threshold and outcome health met.
-- Fallback readiness verified in policy and eval outcomes.
+## Current gate checks (traceability-oriented)
+- Policy artifact validity.
+- Retrieval boundary configuration integrity.
+- Tool-router enforcement scenario evidence.
+- Telemetry evidence (audit event coverage + identity fields).
+- Replay evidence validity/coverage.
+- Eval suite threshold + realism checks.
+- Fallback readiness.
+- Kill-switch readiness.
+- Guarantees manifest contract/evidence checks.
+- Security guarantees verification for release-relevant invariants.
 
-## Evidence Expectations
-Launch gate must not produce `go` without real artifacts (policy, audit, replay, eval summary, eval scenario outputs).
+## Release-blocking guarantee behavior
+
+Core guarantees are release-relevant. If guarantees verification reports missing/failing release invariants, launch gate should classify as `no_go` and surface the issue in `blockers` under `security_guarantees_verification`.
+
+## Evidence expectations
+
+Launch gate should not produce `go` without real evidence artifacts:
+- `artifacts/logs/audit.jsonl`
+- `artifacts/logs/replay/*.replay.json`
+- `artifacts/logs/evals/*.jsonl`
+- `artifacts/logs/evals/*.summary.json`
+- `artifacts/logs/verification/security_guarantees.summary.json` (when reviewer runs verification workflow)
+
+
+## 60-second interpretation checklist
+
+1. `status` is not enough: read `blockers` first.
+2. If `security_guarantees_verification` is in blockers, treat release as unproven.
+3. Review `residual_risks` only after blockers are empty.

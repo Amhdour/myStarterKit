@@ -5,6 +5,27 @@ A production-oriented repository scaffold for building a **secure support agent*
 > Phase 10 adds a hardening and cleanup pass focused on safer defaults, tighter fail-safe behavior, and clearer deployment/demo readiness guidance.
 
 
+## Review this repo in 5 minutes
+
+Use this path to validate credibility quickly (no marketing steps):
+
+1. **Core claims + traceability map**
+   - `docs/security_guarantees.md`
+   - `verification/security_guarantees_manifest.json`
+2. **Regenerate machine evidence from clean state**
+   ```bash
+   ./scripts/regenerate_core_evidence.sh
+   ```
+3. **Inspect guarantees verification output**
+   - `artifacts/logs/verification/security_guarantees.summary.json`
+4. **Inspect launch-readiness decision and blockers/residual risks**
+   - `artifacts/logs/launch_gate/security-readiness-<STAMP>.json`
+5. **Review honest residual risk list**
+   - `docs/evidence_pack/residual_risks.md`
+
+If release-relevant guarantees are missing/failing, launch-gate should not report `go`.
+
+
 ## Security Guarantees
 
 - See `docs/security_guarantees.md` for implementation-aligned security invariants, enforcement points, evidence mappings, and residual risks.

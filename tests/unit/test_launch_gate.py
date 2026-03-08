@@ -12,16 +12,107 @@ def _setup_repo_like_layout(base: Path) -> None:
     (base / "policies").mkdir(parents=True, exist_ok=True)
     (base / "retrieval").mkdir(parents=True, exist_ok=True)
     (base / "tools").mkdir(parents=True, exist_ok=True)
+    (base / "launch_gate").mkdir(parents=True, exist_ok=True)
     (base / "telemetry/audit").mkdir(parents=True, exist_ok=True)
     (base / "artifacts/logs/evals").mkdir(parents=True, exist_ok=True)
     (base / "artifacts/logs/replay").mkdir(parents=True, exist_ok=True)
     (base / "artifacts/logs").mkdir(parents=True, exist_ok=True)
+    (base / "verification").mkdir(parents=True, exist_ok=True)
+    (base / "tests/integration").mkdir(parents=True, exist_ok=True)
+    (base / "tests/unit").mkdir(parents=True, exist_ok=True)
+    (base / "evals/scenarios").mkdir(parents=True, exist_ok=True)
 
     (base / "app/orchestrator.py").write_text("# control")
     (base / "policies/engine.py").write_text("# control")
     (base / "retrieval/service.py").write_text("# control")
     (base / "tools/router.py").write_text("# control")
     (base / "telemetry/audit/contracts.py").write_text("# control")
+    (base / "launch_gate/engine.py").write_text("# control")
+    (base / "tools/execution_guard.py").write_text("# control")
+    (base / "tools/registry.py").write_text("# control")
+    (base / "retrieval/registry.py").write_text("# control")
+    (base / "evals/runner.py").write_text("# control")
+    (base / "evals/runtime.py").write_text("# control")
+    (base / "evals/scenarios/security_baseline.json").write_text("{}")
+    (base / "telemetry/audit/replay.py").write_text("# control")
+    (base / "tests/integration/test_tool_execution_path_enforced.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/integration/test_tool_executor_bypass_path_enforced.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/unit/test_secure_tool_router.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/unit/test_policy_engine.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/unit/test_policy_mutation_runtime.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/unit/test_orchestration_flow.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/unit/test_secure_retrieval_service.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/unit/test_multitenant_retrieval_audit.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/unit/test_eval_runner.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/unit/test_launch_gate.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/unit/test_audit_replay.py").write_text("def test_stub():\n    assert True\n")
+
+    (base / "verification/security_guarantees_manifest.json").write_text(
+        json.dumps(
+            {
+                "invariants": [
+                    {
+                        "id": "tool_router_cannot_be_bypassed",
+                        "enforcement_locations": ["tools/execution_guard.py", "tools/registry.py", "tools/router.py"],
+                        "test_coverage": [
+                            "tests/integration/test_tool_execution_path_enforced.py",
+                            "tests/integration/test_tool_executor_bypass_path_enforced.py",
+                            "tests/unit/test_secure_tool_router.py",
+                        ],
+                        "artifact_evidence": ["artifacts/logs/evals/*.jsonl"],
+                    },
+                    {
+                        "id": "policy_governs_runtime_behavior",
+                        "enforcement_locations": [
+                            "app/orchestrator.py",
+                            "tools/router.py",
+                            "retrieval/service.py",
+                            "policies/engine.py",
+                        ],
+                        "test_coverage": [
+                            "tests/unit/test_policy_engine.py",
+                            "tests/unit/test_policy_mutation_runtime.py",
+                            "tests/unit/test_orchestration_flow.py",
+                        ],
+                        "artifact_evidence": ["artifacts/logs/audit.jsonl"],
+                    },
+                    {
+                        "id": "retrieval_enforces_boundaries",
+                        "enforcement_locations": ["retrieval/service.py", "retrieval/registry.py"],
+                        "test_coverage": ["tests/unit/test_secure_retrieval_service.py", "tests/unit/test_multitenant_retrieval_audit.py"],
+                        "artifact_evidence": ["artifacts/logs/audit.jsonl"],
+                    },
+                    {
+                        "id": "evals_hit_real_flows",
+                        "enforcement_locations": ["evals/runner.py", "evals/runtime.py", "evals/scenarios/security_baseline.json"],
+                        "test_coverage": ["tests/unit/test_eval_runner.py"],
+                        "artifact_evidence": [
+                            "artifacts/logs/evals/*.jsonl",
+                            "artifacts/logs/evals/*.summary.json",
+                            "artifacts/logs/replay/*.replay.json",
+                        ],
+                    },
+                    {
+                        "id": "launch_gate_checks_real_evidence",
+                        "enforcement_locations": ["launch_gate/engine.py"],
+                        "test_coverage": ["tests/unit/test_launch_gate.py"],
+                        "artifact_evidence": [
+                            "artifacts/logs/evals/*.jsonl",
+                            "artifacts/logs/evals/*.summary.json",
+                            "artifacts/logs/replay/*.replay.json",
+                            "artifacts/logs/audit.jsonl",
+                        ],
+                    },
+                    {
+                        "id": "telemetry_supports_replay",
+                        "enforcement_locations": ["telemetry/audit/replay.py", "telemetry/audit/contracts.py"],
+                        "test_coverage": ["tests/unit/test_audit_replay.py"],
+                        "artifact_evidence": ["artifacts/logs/replay/*.replay.json"],
+                    },
+                ]
+            }
+        )
+    )
 
     (base / "policies/bundles/default").mkdir(parents=True, exist_ok=True)
     (base / "policies/bundles/default/policy.json").write_text(
@@ -210,7 +301,7 @@ def test_missing_telemetry_evidence_is_missing_and_residual(tmp_path) -> None:
     gate = SecurityLaunchGate(repo_root=tmp_path)
     report = gate.evaluate()
 
-    assert report.status == CONDITIONAL_GO_STATUS
+    assert report.status == NO_GO_STATUS
     assert _scorecard_status(report, "telemetry_evidence") == MISSING_CHECK_STATUS
     assert any("telemetry_evidence:" in risk for risk in report.residual_risks)
 
@@ -285,16 +376,16 @@ def test_fallback_readiness_failure_is_residual_risk(tmp_path) -> None:
     assert any("fallback_readiness:" in risk for risk in report.residual_risks)
 
 
-def test_missing_replay_evidence_is_residual_risk(tmp_path) -> None:
+def test_missing_replay_evidence_blocks_due_to_core_guarantee_failure(tmp_path) -> None:
     _setup_repo_like_layout(tmp_path)
     (tmp_path / "artifacts/logs/replay/security-redteam-20260101T000000Z-auditability.replay.json").unlink()
 
     gate = SecurityLaunchGate(repo_root=tmp_path)
     report = gate.evaluate()
 
-    assert report.status == CONDITIONAL_GO_STATUS
+    assert report.status == NO_GO_STATUS
     assert _scorecard_status(report, "replay_evidence") == MISSING_CHECK_STATUS
-    assert any("replay_evidence:" in risk for risk in report.residual_risks)
+    assert any("security_guarantees_verification:" in blocker for blocker in report.blockers)
 
 
 def test_tool_router_enforcement_evidence_failure_blocks(tmp_path) -> None:
@@ -407,6 +498,7 @@ def test_scorecard_contains_expected_categories(tmp_path) -> None:
 
     categories = {item.category_name for item in report.scorecard}
     assert categories == {
+        "guarantees_manifest",
         "policy_artifacts",
         "retrieval_boundary",
         "tool_router_enforcement",
@@ -416,6 +508,73 @@ def test_scorecard_contains_expected_categories(tmp_path) -> None:
         "fallback_readiness",
         "kill_switch_readiness",
     }
+
+
+def test_missing_manifest_enforcement_location_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    manifest_path = tmp_path / "verification/security_guarantees_manifest.json"
+    payload = json.loads(manifest_path.read_text())
+    payload["invariants"][0]["enforcement_locations"].append("tools/not_real.py")
+    manifest_path.write_text(json.dumps(payload))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert report.status == NO_GO_STATUS
+    assert _scorecard_status(report, "guarantees_manifest") == "fail"
+    check = next(item for item in report.checks if item.check_name == "guarantees_manifest_contract")
+    assert "tool_router_cannot_be_bypassed" in check.evidence["missing_enforcement_locations"]
+    assert any("guarantees_manifest_contract:" in blocker for blocker in report.blockers)
+
+
+def test_missing_manifest_test_mapping_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    manifest_path = tmp_path / "verification/security_guarantees_manifest.json"
+    payload = json.loads(manifest_path.read_text())
+    payload["invariants"][1]["test_coverage"].append("tests/unit/test_not_real.py")
+    manifest_path.write_text(json.dumps(payload))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert report.status == NO_GO_STATUS
+    assert _scorecard_status(report, "guarantees_manifest") == "fail"
+    check = next(item for item in report.checks if item.check_name == "guarantees_manifest_contract")
+    assert "policy_governs_runtime_behavior" in check.evidence["missing_test_coverage_files"]
+
+
+def test_missing_manifest_artifact_mapping_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    manifest_path = tmp_path / "verification/security_guarantees_manifest.json"
+    payload = json.loads(manifest_path.read_text())
+    payload["invariants"][2]["artifact_evidence"].append("artifacts/logs/replay/never_exists.replay.json")
+    manifest_path.write_text(json.dumps(payload))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert report.status == NO_GO_STATUS
+    assert _scorecard_status(report, "guarantees_manifest") == "fail"
+    check = next(item for item in report.checks if item.check_name == "security_guarantees_verification")
+    assert "retrieval_enforces_boundaries" in check.evidence["failing_release_invariants"]
+    assert any("security_guarantees_verification:" in blocker for blocker in report.blockers)
+
+
+def test_missing_release_relevant_invariant_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    manifest_path = tmp_path / "verification/security_guarantees_manifest.json"
+    payload = json.loads(manifest_path.read_text())
+    payload["invariants"] = [item for item in payload["invariants"] if item.get("id") != "telemetry_supports_replay"]
+    manifest_path.write_text(json.dumps(payload))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert report.status == NO_GO_STATUS
+    check = next(item for item in report.checks if item.check_name == "security_guarantees_verification")
+    assert "telemetry_supports_replay" in check.evidence["missing_release_invariants"]
+    assert any("security_guarantees_verification:" in blocker for blocker in report.blockers)
+    assert not any("security_guarantees_verification:" in risk for risk in report.residual_risks)
 
 
 def test_missing_mandatory_controls_yields_no_go(tmp_path) -> None:
