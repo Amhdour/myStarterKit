@@ -1,8 +1,10 @@
 # Architecture (Phase 10)
 
 > See `docs/architecture_diagrams.md` for runtime-aligned Mermaid diagrams of system topology, trust boundaries, and core control flows.
+> See `docs/deployment_architecture.md` for a practical deployment-layer view and control placement map.
 > See `docs/trust_boundaries.md` for a boundary-by-boundary control, risk, and logging reference.
 > See `docs/threat_model.md` for concrete threats, implemented controls, and residual risk.
+> See `docs/security_guarantees.md` for implementation-aligned invariants and their evidence/limitations.
 
 ## Design Goals
 - Policy-first orchestration.

@@ -4,6 +4,11 @@ A production-oriented repository scaffold for building a **secure support agent*
 
 > Phase 10 adds a hardening and cleanup pass focused on safer defaults, tighter fail-safe behavior, and clearer deployment/demo readiness guidance.
 
+
+## Security Guarantees
+
+- See `docs/security_guarantees.md` for implementation-aligned security invariants, enforcement points, evidence mappings, and residual risks.
+
 ## Purpose
 
 This starter kit provides a clean foundation to:
@@ -135,6 +140,7 @@ python -c "from pathlib import Path; from launch_gate.engine import SecurityLaun
 
 - Architecture deep-dive: `docs/architecture.md`
 - Architecture diagrams: `docs/architecture_diagrams.md`
+- Deployment architecture: `docs/deployment_architecture.md`
 - Trust boundaries: `docs/trust_boundaries.md`
 - Threat model: `docs/threat_model.md`
 - Operator/developer setup: `docs/operator/setup.md`

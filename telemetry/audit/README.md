@@ -7,6 +7,7 @@ Phase 6 adds:
 - Event types for request lifecycle, policy/retrieval/tool decisions, fallback, denies, confirmations, and errors.
 - JSONL output sink for launch-gate/evidence-pack consumption.
 - Replay artifact generation to reconstruct execution timelines.
+- Replay artifact event-type coverage/count metadata for machine-checkable completeness checks.
 
 Safety notes:
 - Avoid logging raw sensitive inputs; prefer decision metadata and counts.

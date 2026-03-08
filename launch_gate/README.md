@@ -1,21 +1,25 @@
 # launch_gate/
 
-Launch-gate readiness evaluator for go / conditional_go / no_go decisions.
+Launch-gate readiness evaluator for `go` / `conditional_go` / `no_go` decisions.
 
-Phase 8 adds machine-checkable checks for:
+## What it checks
+
 - mandatory control presence
 - policy artifact validity
-<<<<<<< HEAD
-- audit minimum evidence
-- eval pass thresholds
-=======
 - retrieval boundary configuration validity
 - tool-router enforcement configuration validity
-- production kill-switch state
-- audit minimum evidence
-- replay artifact presence/validity
-- eval pass thresholds and outcome health
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+- production kill-switch readiness
+- telemetry evidence (audit + replay + required event coverage)
+- eval suite evidence (presence, readability, pass-rate threshold, fail/inconclusive health)
 - fallback readiness
 
-Outputs are structured and include blockers and residual-risk summaries.
+## Output shape
+
+`python -m launch_gate.engine` prints structured JSON that includes:
+- overall status (`go`, `conditional_go`, `no_go`)
+- reviewer scorecard categories with `pass` / `fail` / `missing`
+- blockers
+- residual risks
+- per-check details + concrete evidence fields
+
+Readiness is evidence-based and does not return `go` without required policy/eval/control evidence.

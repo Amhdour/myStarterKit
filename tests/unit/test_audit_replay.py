@@ -14,6 +14,7 @@ from telemetry.audit import (
     build_replay_artifact,
     create_audit_event,
     generate_trace_id,
+    validate_replay_completeness,
     write_replay_artifact,
 )
 from telemetry.audit.sinks import InMemoryAuditSink, JsonlAuditSink
@@ -159,8 +160,35 @@ def test_replay_artifact_completeness(tmp_path) -> None:
     write_replay_artifact(artifact, out)
 
     parsed = json.loads(out.read_text())
+    assert parsed["replay_version"] == "1"
     assert parsed["trace_id"] == trace_id
     assert parsed["request_id"] == "req-1"
+    assert parsed["coverage"]["request.start"] is True
+    assert parsed["coverage"]["request.end"] is True
+    assert parsed["event_type_counts"]["request.start"] == 1
     assert len(parsed["timeline"]) == 2
     assert parsed["timeline"][0]["event_type"] == REQUEST_START_EVENT
     assert parsed["timeline"][1]["event_type"] == REQUEST_END_EVENT
+
+
+def test_replay_completeness_validation_reports_missing_events() -> None:
+    sink = InMemoryAuditSink()
+    sink.emit(
+        create_audit_event(
+            trace_id="trace-1",
+            request_id="req-1",
+            actor_id="actor-1",
+            tenant_id="tenant-a",
+            event_type=REQUEST_START_EVENT,
+            payload={},
+        )
+    )
+
+    artifact = build_replay_artifact(sink.events)
+    complete, missing = validate_replay_completeness(
+        artifact,
+        required_event_types=(REQUEST_START_EVENT, REQUEST_END_EVENT),
+    )
+
+    assert complete is False
+    assert missing == (REQUEST_END_EVENT,)
