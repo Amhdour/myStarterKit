@@ -23,3 +23,9 @@ Run:
 ```bash
 python -m launch_gate.engine
 ```
+
+Reproducible evidence workflow (clean-state regeneration of eval/replay/verification/launch-gate outputs):
+
+```bash
+./scripts/regenerate_core_evidence.sh
+```

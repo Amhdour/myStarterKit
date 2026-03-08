@@ -17,10 +17,27 @@ This folder contains reviewer-ready evidence artifacts for security review, laun
 - `open_issues.md`
 
 ## How to Use
-1. Run tests, evals, and launch gate.
-2. Run `./scripts/check_evidence_pack.sh` to verify required evidence docs are present.
-3. Update this pack with current outputs and observations.
-4. Attach the folder (or exported PDF bundle) during security/client/portfolio review.
+1. Regenerate core machine evidence from a clean state:
+   ```bash
+   ./scripts/regenerate_core_evidence.sh
+   ```
+   Optional deterministic override:
+   ```bash
+   EVIDENCE_STAMP=20260101T000000Z ./scripts/regenerate_core_evidence.sh
+   ```
+   The script fails closed if either:
+   - security guarantees verification is not `pass`, or
+   - launch-gate output status is not `go`.
+2. Confirm output artifacts were generated:
+   - `artifacts/logs/evals/security-redteam-<STAMP>.jsonl`
+   - `artifacts/logs/evals/security-redteam-<STAMP>.summary.json`
+   - `artifacts/logs/replay/security-redteam-<STAMP>-*.replay.json`
+   - `artifacts/logs/verification/security_guarantees.summary.json`
+   - `artifacts/logs/verification/security_guarantees.summary.md`
+   - `artifacts/logs/launch_gate/security-readiness-<STAMP>.json`
+3. Run `./scripts/check_evidence_pack.sh` to verify required evidence docs are present.
+4. Update this pack with current outputs and observations.
+5. Attach the folder (or exported PDF bundle) during security/client/portfolio review.
 
 ## Evidence Integrity Notes
 - Do not claim controls that are not implemented.

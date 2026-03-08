@@ -19,6 +19,7 @@ from launch_gate.contracts import (
     ScorecardCategory,
 )
 from policies.loader import load_policy
+from verification.runner import run_security_guarantees_verification
 
 
 @dataclass
@@ -33,6 +34,7 @@ class LaunchGateConfig:
         )
     )
     policy_path: str = "policies/bundles/default/policy.json"
+    guarantees_manifest_path: str = "verification/security_guarantees_manifest.json"
     audit_log_path: str = "artifacts/logs/audit.jsonl"
     replay_artifact_glob: str = "artifacts/logs/replay/*.replay.json"
     eval_summary_glob: str = "artifacts/logs/evals/*.summary.json"
@@ -77,6 +79,16 @@ class LaunchGateConfig:
     required_fallback_scenario_id: str = "fallback_to_rag_verification"
     require_fallback_ready: bool = True
     require_replay_artifact: bool = True
+    release_relevant_invariants: Sequence[str] = field(
+        default_factory=lambda: (
+            "tool_router_cannot_be_bypassed",
+            "policy_governs_runtime_behavior",
+            "retrieval_enforces_boundaries",
+            "evals_hit_real_flows",
+            "launch_gate_checks_real_evidence",
+            "telemetry_supports_replay",
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -95,6 +107,9 @@ class SecurityLaunchGate:
     def evaluate(self) -> ReadinessReport:
         checks = [
             self._check_mandatory_controls(),
+            self._check_guarantees_manifest_contract(),
+            self._check_guarantees_manifest_evidence(),
+            self._check_security_guarantees_verification(),
             self._check_policy_artifact(),
             self._check_retrieval_boundary_config(),
             self._check_tool_router_enforcement_evidence(),
@@ -107,6 +122,11 @@ class SecurityLaunchGate:
 
         by_name = {check.check_name: check for check in checks}
         scorecard = (
+            self._build_scorecard_category(
+                "guarantees_manifest",
+                ("guarantees_manifest_contract", "guarantees_manifest_evidence", "security_guarantees_verification"),
+                by_name,
+            ),
             self._build_scorecard_category("policy_artifacts", ("policy_artifact",), by_name),
             self._build_scorecard_category("retrieval_boundary", ("retrieval_boundary_config",), by_name),
             self._build_scorecard_category("tool_router_enforcement", ("tool_router_enforcement_evidence",), by_name),
@@ -119,13 +139,20 @@ class SecurityLaunchGate:
 
         blocker_checks = {
             "mandatory_controls",
+            "guarantees_manifest_contract",
+            "security_guarantees_verification",
             "policy_artifact",
             "retrieval_boundary_config",
             "tool_router_enforcement_evidence",
             "kill_switch_readiness",
             "eval_suite_evidence",
         }
-        residual_checks = {"telemetry_evidence", "replay_evidence", "fallback_readiness"}
+        residual_checks = {
+            "guarantees_manifest_evidence",
+            "telemetry_evidence",
+            "replay_evidence",
+            "fallback_readiness",
+        }
 
         blockers = [self._render_issue(check) for check in checks if check.check_name in blocker_checks and not check.passed]
         residual_risks = [self._render_issue(check) for check in checks if check.check_name in residual_checks and not check.passed]
@@ -153,7 +180,7 @@ class SecurityLaunchGate:
 
     def _render_issue(self, check: GateCheckResult) -> str:
         evidence_ref = ""
-        for key in ("policy_path", "audit_path", "summary_path", "eval_jsonl_path", "replay_path"):
+        for key in ("manifest_path", "policy_path", "audit_path", "summary_path", "eval_jsonl_path", "replay_path"):
             value = check.evidence.get(key)
             if isinstance(value, str) and value:
                 evidence_ref = value
@@ -194,6 +221,230 @@ class SecurityLaunchGate:
             passed=passed,
             details=details,
             evidence={"required": list(self.config.mandatory_control_files), "missing": missing},
+        )
+
+    def _check_guarantees_manifest_contract(self) -> GateCheckResult:
+        manifest_path = self.repo_root / self.config.guarantees_manifest_path
+        if not manifest_path.is_file():
+            return GateCheckResult(
+                check_name="guarantees_manifest_contract",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="guarantees manifest missing",
+                evidence={"manifest_path": str(manifest_path), "manifest_exists": False},
+            )
+
+        payload = _read_json_file(manifest_path)
+        if payload is None:
+            return GateCheckResult(
+                check_name="guarantees_manifest_contract",
+                status=FAIL_CHECK_STATUS,
+                passed=False,
+                details="guarantees manifest unreadable",
+                evidence={"manifest_path": str(manifest_path), "manifest_exists": True},
+            )
+
+        invariants = payload.get("invariants")
+        if not isinstance(invariants, list) or len(invariants) == 0:
+            return GateCheckResult(
+                check_name="guarantees_manifest_contract",
+                status=FAIL_CHECK_STATUS,
+                passed=False,
+                details="guarantees manifest invalid: invariants must be a non-empty list",
+                evidence={"manifest_path": str(manifest_path), "manifest_exists": True, "invariant_count": 0},
+            )
+
+        missing_enforcement_locations: dict[str, list[str]] = {}
+        missing_test_coverage_files: dict[str, list[str]] = {}
+        malformed_invariants: dict[str, list[str]] = {}
+        for idx, invariant in enumerate(invariants):
+            if not isinstance(invariant, dict):
+                malformed_invariants[f"index:{idx}"] = ["invariant entry must be an object"]
+                continue
+
+            invariant_id = str(invariant.get("id", "")).strip() or f"index:{idx}"
+
+            entry_errors: list[str] = []
+            enforcement_locations = invariant.get("enforcement_locations")
+            if not isinstance(enforcement_locations, list) or len(enforcement_locations) == 0:
+                entry_errors.append("enforcement_locations must be a non-empty list")
+                enforcement_locations = []
+            test_coverage = invariant.get("test_coverage")
+            if not isinstance(test_coverage, list) or len(test_coverage) == 0:
+                entry_errors.append("test_coverage must be a non-empty list")
+                test_coverage = []
+            artifact_evidence = invariant.get("artifact_evidence")
+            if not isinstance(artifact_evidence, list) or len(artifact_evidence) == 0:
+                entry_errors.append("artifact_evidence must be a non-empty list")
+
+            if entry_errors:
+                malformed_invariants[invariant_id] = entry_errors
+
+            missing_locations = [path for path in enforcement_locations if not (self.repo_root / str(path)).is_file()]
+            if missing_locations:
+                missing_enforcement_locations[invariant_id] = missing_locations
+
+            missing_tests = [path for path in test_coverage if not (self.repo_root / str(path)).is_file()]
+            if missing_tests:
+                missing_test_coverage_files[invariant_id] = missing_tests
+
+        passed = not (malformed_invariants or missing_enforcement_locations or missing_test_coverage_files)
+
+        if passed:
+            details = "guarantees manifest contract verified against code/tests/evidence"
+        else:
+            details_parts = []
+            if malformed_invariants:
+                details_parts.append("invalid invariant schema")
+            if missing_enforcement_locations:
+                details_parts.append("missing enforcement code")
+            if missing_test_coverage_files:
+                details_parts.append("missing test coverage files")
+            details = "guarantees manifest contract verification failed: " + "; ".join(details_parts)
+
+        return GateCheckResult(
+            check_name="guarantees_manifest_contract",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details=details,
+            evidence={
+                "manifest_path": str(manifest_path),
+                "manifest_exists": True,
+                "invariant_count": len(invariants),
+                "missing_enforcement_locations": missing_enforcement_locations,
+                "missing_test_coverage_files": missing_test_coverage_files,
+                "malformed_invariants": malformed_invariants,
+            },
+        )
+
+    def _check_guarantees_manifest_evidence(self) -> GateCheckResult:
+        manifest_path = self.repo_root / self.config.guarantees_manifest_path
+        payload = _read_json_file(manifest_path)
+        if payload is None:
+            return GateCheckResult(
+                check_name="guarantees_manifest_evidence",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="guarantees manifest evidence verification unavailable: manifest missing or unreadable",
+                evidence={"manifest_path": str(manifest_path), "manifest_exists": manifest_path.is_file()},
+            )
+
+        invariants = payload.get("invariants")
+        if not isinstance(invariants, list) or len(invariants) == 0:
+            return GateCheckResult(
+                check_name="guarantees_manifest_evidence",
+                status=FAIL_CHECK_STATUS,
+                passed=False,
+                details="guarantees manifest evidence verification failed: invalid invariants payload",
+                evidence={"manifest_path": str(manifest_path), "manifest_exists": True},
+            )
+
+        missing_artifact_evidence: dict[str, list[str]] = {}
+        failing_test_evidence: dict[str, str] = {}
+        eval_bundle = self._load_latest_eval_evidence_bundle()
+        eval_summary_passed = bool(eval_bundle.summary.get("passed", False)) if eval_bundle is not None else None
+
+        for idx, invariant in enumerate(invariants):
+            if not isinstance(invariant, dict):
+                continue
+            invariant_id = str(invariant.get("id", "")).strip() or f"index:{idx}"
+            artifact_evidence = invariant.get("artifact_evidence")
+            if not isinstance(artifact_evidence, list):
+                missing_artifact_evidence[invariant_id] = ["artifact_evidence"]
+                continue
+
+            missing_for_invariant: list[str] = []
+            for pattern in artifact_evidence:
+                if not isinstance(pattern, str) or not pattern.strip() or len(tuple(self.repo_root.glob(pattern))) == 0:
+                    missing_for_invariant.append(str(pattern))
+            if missing_for_invariant:
+                missing_artifact_evidence[invariant_id] = missing_for_invariant
+
+            if (
+                eval_summary_passed is False
+                and any(isinstance(pattern, str) and "artifacts/logs/evals/" in pattern for pattern in artifact_evidence)
+            ):
+                failing_test_evidence[invariant_id] = "latest eval summary is not passing"
+
+        passed = not (missing_artifact_evidence or failing_test_evidence)
+        details = (
+            "guarantees manifest evidence verified"
+            if passed
+            else "guarantees manifest evidence verification failed: missing required evidence artifacts or failing eval evidence"
+        )
+        return GateCheckResult(
+            check_name="guarantees_manifest_evidence",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details=details,
+            evidence={
+                "manifest_path": str(manifest_path),
+                "manifest_exists": True,
+                "missing_artifact_evidence": missing_artifact_evidence,
+                "failing_test_evidence": failing_test_evidence,
+            },
+        )
+
+
+    def _check_security_guarantees_verification(self) -> GateCheckResult:
+        try:
+            report = run_security_guarantees_verification(
+                self.repo_root,
+                manifest_path=self.config.guarantees_manifest_path,
+                require_evidence_presence=True,
+            )
+        except Exception as exc:
+            return GateCheckResult(
+                check_name="security_guarantees_verification",
+                status=FAIL_CHECK_STATUS,
+                passed=False,
+                details=f"security guarantees verification runner failed: {type(exc).__name__}",
+                evidence={"manifest_path": str(self.repo_root / self.config.guarantees_manifest_path)},
+            )
+
+        results = report.get("results", []) if isinstance(report.get("results", []), list) else []
+        by_id = {
+            str(item.get("invariant_id", "")): item
+            for item in results
+            if isinstance(item, dict) and str(item.get("invariant_id", ""))
+        }
+
+        required = tuple(self.config.release_relevant_invariants)
+        missing_required = [invariant_id for invariant_id in required if invariant_id not in by_id]
+
+        failing_required: dict[str, dict[str, object]] = {}
+        for invariant_id in required:
+            row = by_id.get(invariant_id)
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("status", "")) != PASS_CHECK_STATUS:
+                failing_required[invariant_id] = {
+                    "status": str(row.get("status", "unknown")),
+                    "details": str(row.get("details", "")),
+                    "missing_code_paths": list(row.get("missing_code_paths", [])) if isinstance(row.get("missing_code_paths", []), list) else [],
+                    "missing_test_paths": list(row.get("missing_test_paths", [])) if isinstance(row.get("missing_test_paths", []), list) else [],
+                    "missing_evidence_globs": list(row.get("missing_evidence_globs", [])) if isinstance(row.get("missing_evidence_globs", []), list) else [],
+                }
+
+        passed = len(missing_required) == 0 and len(failing_required) == 0
+        details = (
+            "security guarantees verification satisfied for all release-relevant invariants"
+            if passed
+            else "security guarantees verification failed for release-relevant invariants"
+        )
+
+        return GateCheckResult(
+            check_name="security_guarantees_verification",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details=details,
+            evidence={
+                "manifest_path": str(self.repo_root / self.config.guarantees_manifest_path),
+                "verification_status": str(report.get("status", "unknown")),
+                "required_release_invariants": list(required),
+                "missing_release_invariants": missing_required,
+                "failing_release_invariants": failing_required,
+            },
         )
 
     def _check_policy_artifact(self) -> GateCheckResult:
