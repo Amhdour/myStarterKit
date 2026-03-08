@@ -1,25 +1,19 @@
 # launch_gate/
 
-Launch-gate readiness evaluator for `go` / `conditional_go` / `no_go` decisions.
+Evidence-driven release-readiness checks for secure support-agent launches.
 
-## What it checks
+Current checks validate concrete artifacts and outputs:
+- Mandatory control files are present.
+- Policy artifact exists, is readable JSON, and validates.
+- Retrieval boundary configuration is explicit (tenant/source allowlists + trust/provenance enforcement).
+- Tool-router enforcement is evidenced by required eval scenario outcomes.
+- Telemetry audit output exists and contains required event coverage.
+- Replay artifacts exist (when required) and contain required event counts.
+- Eval summary output exists and meets threshold + outcome-health constraints.
+- Fallback readiness is validated in policy and confirmed by fallback eval evidence.
+- Kill-switch readiness confirms production kill-switch is disabled.
 
-- mandatory control presence
-- policy artifact validity
-- retrieval boundary configuration validity
-- tool-router enforcement configuration validity
-- production kill-switch readiness
-- telemetry evidence (audit + replay + required event coverage)
-- eval suite evidence (presence, readability, pass-rate threshold, fail/inconclusive health)
-- fallback readiness
-
-## Output shape
-
-`python -m launch_gate.engine` prints structured JSON that includes:
-- overall status (`go`, `conditional_go`, `no_go`)
-- reviewer scorecard categories with `pass` / `fail` / `missing`
-- blockers
-- residual risks
-- per-check details + concrete evidence fields
-
-Readiness is evidence-based and does not return `go` without required policy/eval/control evidence.
+Readiness outputs:
+- `go`: no blockers and no residual risks.
+- `conditional_go`: no blockers, but residual risks remain.
+- `no_go`: one or more blocker checks failed.

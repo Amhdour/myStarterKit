@@ -91,7 +91,7 @@ Scope: current code in `app/`, `policies/`, `retrieval/`, `tools/`, `telemetry/a
 - `generate_trace_id()` creates per-run trace IDs.
 - `create_audit_event(...)` stamps event IDs and identity fields.
 - `SupportAgentOrchestrator` emits `request.start`, policy/retrieval/tool decision events, and `request.end`.
-- JSONL and in-memory sinks preserve structured records; replay artifacts can reconstruct timelines.
+- JSONL and in-memory sinks preserve structured records; replay artifacts include timelines, event coverage/counts, and decision summaries for reconstruction.
 
 **Evidence / tests**
 - `tests/unit/test_audit_replay.py` verifies trace ID uniqueness, JSONL emission, and replay artifact completeness.
@@ -101,19 +101,26 @@ Scope: current code in `app/`, `policies/`, `retrieval/`, `tools/`, `telemetry/a
 - Sink durability and transport guarantees depend on deployment configuration (e.g., file-system guarantees for JSONL).
 - Event payloads intentionally avoid raw sensitive content, which limits some deep forensic details by design.
 
-## 6) Launch-gate decisions are evidence-based (**partial in current repo state**)
+## 6) Launch-gate decisions are evidence-based
 
 **What it means**
-- Launch readiness decisions should be computed from machine-checkable artifacts (policy, audit logs, eval summaries, and control-file presence), not ad-hoc judgment.
+- Launch readiness decisions are computed from machine-checkable artifacts (policy, audit logs, replay artifacts, eval summaries, eval scenario JSONL, and control-file presence), not ad-hoc judgment.
 
 **Where it is enforced**
-- `SecurityLaunchGate.evaluate(...)` is designed to aggregate check results with explicit evidence payloads and classify blockers/residual risks.
-- Supporting artifacts and summaries are present under `artifacts/logs/` and `docs/evidence_pack/`.
+- `SecurityLaunchGate.evaluate(...)` aggregates explicit checks and classifies blockers vs residual risks.
+- Tool-router enforcement and fallback readiness are tied to concrete eval JSONL scenario outcomes.
+- Replay and telemetry checks require artifact presence and required event coverage.
 
 **Evidence / tests**
-- `launch_gate/engine.py` contains evidence-oriented check structures and `GateCheckResult` evidence fields.
-- `docs/evidence_pack/launch_gate_summary.md` describes launch-gate evidence expectations.
+- `tests/unit/test_launch_gate.py` verifies `go` / `conditional_go` / `no_go` classification and covers:
+  - missing policy artifacts,
+  - missing telemetry evidence,
+  - missing replay evidence,
+  - missing/failing eval evidence,
+  - missing tool-router eval JSONL evidence,
+  - fallback readiness failures.
+- `docs/evidence_pack/launch_gate_summary.md` documents required launch-gate evidence artifacts.
 
 **Known limitations / residual risk**
-- **Current implementation status is partial:** unresolved merge-conflict markers in `launch_gate/engine.py` and `tests/unit/test_launch_gate.py` prevent launch-gate module import and launch-gate test execution until resolved.
-- Because of the syntax-conflict state, this guarantee is currently documented as design-intended but not continuously test-verified in the present branch.
+- Launch-gate quality depends on artifact integrity and freshness; file-based artifacts are not immutable in this starter baseline.
+- Required scenario IDs are configuration-driven and must stay aligned with eval suite evolution.

@@ -103,7 +103,7 @@ def _doc(*, doc_id: str, source_id: str, tenant_id: str, uri: str) -> RetrievalD
     )
 
 
-def test_secure_retrieval_filters_cross_tenant_source_without_provenance_leakage() -> None:
+def test_secure_retrieval_denies_mixed_tenant_source_request_fail_closed() -> None:
     registry = InMemorySourceRegistry()
     registry.register(SourceRegistration(source_id="kb-tenant-a", tenant_id="tenant-a", display_name="Tenant A KB"))
     registry.register(SourceRegistration(source_id="kb-tenant-b", tenant_id="tenant-b", display_name="Tenant B KB"))
@@ -128,9 +128,7 @@ def test_secure_retrieval_filters_cross_tenant_source_without_provenance_leakage
         )
     )
 
-    assert tuple(doc.document_id for doc in result) == ("doc-a",)
-    assert all(doc.trust.tenant_id == "tenant-a" for doc in result)
-    assert all("tenant-b" not in doc.provenance.document_uri for doc in result)
+    assert result == ()
 
 
 def test_cross_tenant_attempt_is_blocked_and_auditable_with_no_provenance_leakage() -> None:

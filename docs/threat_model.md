@@ -1,113 +1,142 @@
 # Threat Model (Implementation-Aligned)
 
-This threat model is specific to the code currently present in this repository.
-It focuses on implemented controls and explicit residual risk, not aspirational controls.
+This threat model reflects the **current implemented runtime** in this repository.
+It documents real controls and residual risks without claiming unimplemented mitigations.
 
-## Scope and Assumptions
+## Scope
 
-**In scope components**
-- `app/orchestrator.py` (request flow + stage gating + deny/fallback behavior)
-- `policies/engine.py` and `policies/loader.py` (runtime authorization decisions)
-- `retrieval/service.py` (tenant/source/trust/provenance enforcement)
-- `tools/router.py` and `tools/registry.py` (mediated tool routing + execution guard)
-- `telemetry/audit/*` (event schema, sinks, replay artifacts)
-- `launch_gate/engine.py` (evidence-based readiness checks; see limitation below)
+### In-scope components
+- `app/orchestrator.py` (stage gating, deny/fallback behavior)
+- `policies/engine.py`, `policies/loader.py` (runtime policy decisions and policy loading)
+- `retrieval/service.py`, `retrieval/registry.py` (tenant/source/trust/provenance enforcement)
+- `tools/router.py`, `tools/registry.py`, `tools/execution_guard.py` (mediated tool decisions + execution guard)
+- `telemetry/audit/*` (structured events, sinks, replay generation)
+- `evals/*` (security scenario evidence)
+- `launch_gate/engine.py` (artifact-backed release readiness)
 
-**Assumptions**
+### Trust assumptions
 - User input and retrieved content are untrusted.
-- Policy bundle/config is a sensitive control-plane input.
-- Tool execution is high-risk and must remain mediated.
-
-**Current branch limitation (important)**
-- The repository currently contains unresolved merge-conflict markers in launch-gate and related tests, which prevents normal import/test execution for those modules. Threat statements below treat launch-gate controls as *design-implemented but currently partially blocked in this branch state*.
+- Policy artifacts are sensitive control-plane inputs.
+- Tool execution is high-risk and must stay router-mediated.
+- Local artifact files (`artifacts/logs/*`) are evidence inputs, not tamper-proof ledgers.
 
 ---
 
-## Threat Inventory
+## Threats and Controls
 
-### 1) Prompt Injection (direct user input)
-- **Description:** A user attempts to override intended behavior with adversarial instructions.
-- **Affected component:** Orchestrator/model boundary.
-- **Impact:** Unsafe or policy-inconsistent outputs.
-- **Existing controls:** Stage policy checks before retrieval, generation, and tool-routing; deny/fallback paths in orchestrator; security eval harness includes injection/disclosure scenarios.
-- **Remaining gaps:** No dedicated model-output moderation or strict constrained decoding layer in current runtime.
+## 1) Prompt injection (direct user input)
+- **Description:** User text attempts to override safety constraints or policy intent.
+- **Affected component:** Orchestrator + model stage boundary.
+- **Impact:** Unsafe responses or policy-inconsistent behavior.
+- **Existing controls:**
+  - Policy checks before retrieval/model/tool-routing stages.
+  - Blocked response path when stage policy denies.
+  - Eval scenarios for direct injection and unsafe disclosure attempts.
+- **Remaining gaps:** No dedicated output moderation/DLP layer on generated text.
 
-### 2) Indirect Prompt Injection (retrieved content)
-- **Description:** Retrieved documents include malicious instructions that influence model behavior.
-- **Affected component:** Retrieval + model context assembly.
-- **Impact:** Model follows adversarial instructions embedded in corpus content.
-- **Existing controls:** Retrieval source registration, tenant/source allowlists, trust-domain constraints, and required trust/provenance metadata checks before documents are accepted.
-- **Remaining gaps:** No semantic sanitizer/classifier for retrieved content; trusted-source compromise remains a residual risk.
+## 2) Indirect prompt injection (retrieved content)
+- **Description:** Retrieved corpus content includes adversarial instructions that influence generation.
+- **Affected component:** Retrieval acceptance path + model context assembly.
+- **Impact:** Unsafe instruction-following from trusted retrieval context.
+- **Existing controls:**
+  - Source registration and tenant/source allowlist enforcement.
+  - Trust-domain allowlisting and trust/provenance validation.
+  - Fail-closed retrieval behavior on invalid policy/backend conditions.
+- **Remaining gaps:** No semantic content sanitizer/classifier for accepted documents.
 
-### 3) Retrieval Poisoning
-- **Description:** Adversarial or low-integrity data enters approved retrieval sources.
-- **Affected component:** Source/document boundary and retrieval pipeline.
-- **Impact:** Incorrect/unsafe responses and degraded operator trust.
-- **Existing controls:** Unknown/disabled/unregistered sources are dropped; tenant and trust-domain checks are enforced; retrieval fails closed on invalid policy/backend exceptions.
-- **Remaining gaps:** Metadata validation is not equivalent to full content integrity attestation; poisoning detection is not implemented.
+## 3) Retrieval poisoning
+- **Description:** Malicious or low-integrity content enters allowed sources.
+- **Affected component:** Source/document boundary in retrieval flow.
+- **Impact:** Unsafe/inaccurate responses and decision degradation.
+- **Existing controls:**
+  - Unknown/unregistered/disabled sources denied.
+  - Tenant match, trust-domain, trust metadata, provenance checks.
+  - Mixed unauthorized source requests fail closed.
+- **Remaining gaps:** No content integrity attestation or poisoning detection beyond metadata checks.
 
-### 4) Cross-Tenant Leakage
-- **Description:** A request attempts to access another tenant’s data via retrieval or tool actions.
-- **Affected component:** Retrieval boundary + policy/tool routing boundary.
+## 4) Cross-tenant leakage
+- **Description:** Requests attempt to access data across tenant boundaries.
+- **Affected component:** Retrieval boundary and policy gating.
 - **Impact:** Confidentiality breach between tenants.
-- **Existing controls:** Tenant required for retrieval and tool authorization; source tenant must match query tenant; policy enforces tenant allowlists and per-tenant source allowlists.
-- **Remaining gaps:** Protection depends on correct policy/source configuration; no external IAM/ABAC service integration in starter kit.
+- **Existing controls:**
+  - Tenant required in retrieval/tool contexts.
+  - Source tenant must match query tenant.
+  - Policy tenant/source allowlists enforced.
+- **Remaining gaps:** Depends on correct policy/source registration; no external IAM integration in starter baseline.
 
-### 5) Unsafe Tool Use
-- **Description:** Invocation of dangerous tools/actions/arguments.
-- **Affected component:** Tool router and policy evaluation for tool invocation.
-- **Impact:** Unauthorized state changes, abuse, or data exposure.
-- **Existing controls:** Router mediation with allowlist checks, forbidden action/field checks, argument validation, confirmation gates, and rate limits; policy `tools.invoke` evaluation per invocation.
-- **Remaining gaps:** Tool executors are sample-level; production-specific out-of-band approvals and side-effect safeguards are left to implementers.
+## 5) Unsafe tool use
+- **Description:** Invocation of disallowed tools/actions/arguments.
+- **Affected component:** Tool router (`route`) policy and contract checks.
+- **Impact:** Unauthorized side effects or sensitive operations.
+- **Existing controls:**
+  - Centralized allow/deny/require_confirmation logic.
+  - Forbidden action/field checks, argument validation, rate limits.
+  - `tools.invoke` policy evaluation per invocation.
+- **Remaining gaps:** Executor-specific side-effect controls are sample-level and deployment-dependent.
 
-### 6) Privilege Escalation Through Tools
-- **Description:** A low-privilege actor attempts to pivot into high-privilege tool capabilities.
-- **Affected component:** Tool registry/router + policy constraints.
+## 6) Privilege escalation through tools
+- **Description:** Actor attempts to pivot into higher-privilege tool capability.
+- **Affected component:** Router + registry execution boundary.
 - **Impact:** Elevated operations without intended authorization.
-- **Existing controls:** Policy allowlist/forbidden-tools constraints, required request/actor/tenant context, and registry execution-secret mechanism to block direct execution bypass.
-- **Remaining gaps:** Fine-grained role/attribute authorization beyond policy allowlists is limited in current baseline.
+- **Existing controls:**
+  - Policy allowlists/forbidden-tools constraints.
+  - Router-mediated execution path only (`mediate_and_execute`).
+  - Registry execution secret/context guard blocks direct execution bypass.
+- **Remaining gaps:** Fine-grained role/attribute authorization model is limited in baseline policy schema.
 
-### 7) Policy Bypass
-- **Description:** Execution path bypasses or weakens policy checkpoints.
-- **Affected component:** Orchestrator, retrieval service, and tool router.
-- **Impact:** Runtime actions proceed without intended authorization controls.
-- **Existing controls:** Explicit policy evaluation at `retrieval.search`, `model.generate`, `tools.route`, and `tools.invoke`; fail-closed handling on policy errors; integration test checks for non-router registry execution call sites.
-- **Remaining gaps:** New code paths can still introduce bypass risk if they omit these checkpoints; policy quality/governance remains operational responsibility.
+## 7) Policy bypass
+- **Description:** New path executes action without required policy checkpoint.
+- **Affected component:** Orchestrator, retrieval service, tool router.
+- **Impact:** Unauthorized actions proceed without policy enforcement.
+- **Existing controls:**
+  - Explicit policy checkpoints for `retrieval.search`, `model.generate`, `tools.route`, `tools.invoke`.
+  - Fail-closed behavior on policy errors.
+  - Integration checks for restricted tool execution call sites.
+- **Remaining gaps:** Future code changes can still introduce bypasses if checkpoints are omitted.
 
-### 8) Data Exfiltration
-- **Description:** Sensitive data leaves boundaries through model outputs, tool arguments, or telemetry.
-- **Affected component:** Model output path, tool routing surface, telemetry payloads.
-- **Impact:** Confidentiality and compliance failure.
-- **Existing controls:** Tool decision objects redact argument values; retrieval and policy gates constrain available data/tools; telemetry events are structured and primarily decision metadata.
-- **Remaining gaps:** No dedicated DLP/redaction enforcement for generated answer text; sink-level egress controls depend on deployment architecture.
+## 8) Sensitive information disclosure
+- **Description:** Secrets/PII leak via model output, tool inputs, or logs.
+- **Affected component:** Model output path, tool decision surface, telemetry boundary.
+- **Impact:** Confidentiality/compliance failure.
+- **Existing controls:**
+  - Router decision sanitizes argument values.
+  - Retrieval/policy constraints reduce sensitive data exposure scope.
+  - Structured audit events focus on decision metadata.
+- **Remaining gaps:** No full DLP/redaction pass over generated answer text.
 
-### 9) Audit/Log Tampering or Gaps
-- **Description:** Missing, incomplete, or altered audit trail reduces forensic reliability.
-- **Affected component:** Audit sinks, replay artifacts, and launch-gate evidence checks.
-- **Impact:** Weak incident response and weak release evidence.
-- **Existing controls:** Structured `AuditEvent` schema includes trace/request/actor/tenant linkage; JSONL sink and replay artifacts support timeline reconstruction; launch-gate logic is designed to enforce evidence minimums.
-- **Remaining gaps:** No immutable log backend or cryptographic integrity chain in starter kit; launch-gate verification is currently partially blocked by merge-conflict markers in this branch.
+## 9) Audit/log tampering or evidence gaps
+- **Description:** Missing or manipulated telemetry/eval artifacts reduce verifiability.
+- **Affected component:** Audit sinks, replay artifacts, launch-gate evidence checks.
+- **Impact:** Weak incident response and weak release-readiness confidence.
+- **Existing controls:**
+  - Structured `AuditEvent` with trace/request/actor/tenant identifiers.
+  - Replay artifact generation from event streams.
+  - Launch gate requires policy/eval/telemetry/replay evidence and reports blockers/residual risks.
+- **Remaining gaps:** File-based artifacts are not immutable; no cryptographic integrity chain in baseline.
 
-### 10) Excessive Agency
-- **Description:** Agent autonomy expands into risky actions without sufficient control.
-- **Affected component:** Orchestrator + tool-routing policy flow.
-- **Impact:** Unreviewed side effects and operational risk.
-- **Existing controls:** Tools can be disabled by risk tier, gated by policy, and forced into confirmation-required flows; fallback-to-RAG path supports no-tool operation.
-- **Remaining gaps:** Human-in-the-loop approval orchestration and capability-scoping policy granularity are not fully built out in baseline implementation.
+## 10) Excessive agency
+- **Description:** Agent autonomy causes unreviewed side effects.
+- **Affected component:** Orchestrator tool-routing path and policy controls.
+- **Impact:** Unsafe automated actions and operational risk.
+- **Existing controls:**
+  - `tools.route` gating, per-tool confirmation requirements, and rate limits.
+  - Risk-tier control can disable tools with fallback-to-RAG behavior.
+  - Eval and launch-gate checks for fallback and tool-enforcement evidence.
+- **Remaining gaps:** Full human-approval workflow orchestration remains an extension responsibility.
 
 ---
 
 ## Residual Risk Summary
 
-Highest residual risks in current implementation:
-1. **Content-layer model safety risk** (prompt/indirect injection and exfiltration) without a dedicated model-output DLP/moderation layer.
-2. **Source integrity risk** (retrieval poisoning) beyond metadata/trust-domain checks.
-3. **Evidence integrity/availability risk** where audit artifacts are file-based and not immutable; plus current branch launch-gate/test conflict state.
+Top residual risks in current implementation:
+1. **Content-layer safety risk** (injection/disclosure) without a dedicated output moderation layer.
+2. **Retrieval data integrity risk** (poisoning) without deep semantic/integrity attestation.
+3. **Evidence integrity risk** due to file-based artifacts without immutable storage guarantees.
 
-## Reviewer Notes
+## Reviewer Use
 
-- Use this file with:
-  - `docs/trust_boundaries.md` (boundary-centric view),
-  - `docs/security_guarantees.md` (guarantees + evidence mapping), and
-  - `docs/evidence_pack/*` (artifact summaries).
-- Do not interpret this starter kit as a complete production control stack; it is a secure baseline with explicit extension points and residual risk disclosure.
+Use this document alongside:
+- `docs/trust_boundaries.md` (boundary-by-boundary crossings, controls, and logging),
+- `docs/architecture.md` (runtime flow and enforcement points),
+- `docs/security_guarantees.md` (implemented guarantees + limitations),
+- `docs/evidence_pack/*` (release evidence summaries).

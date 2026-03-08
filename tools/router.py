@@ -14,6 +14,7 @@ from tools.contracts import (
     ToolInvocation,
     ToolRegistry,
 )
+from tools.execution_guard import enter_router_execution_context, exit_router_execution_context
 from tools.rate_limit import ToolRateLimiter
 
 
@@ -117,7 +118,12 @@ class SecureToolRouter:
         decision = self.route(invocation)
         if decision.status != ALLOWED_DECISION:
             return decision, None
-        return decision, self.registry.execute(invocation, execution_secret=self._execution_secret)
+
+        token = enter_router_execution_context(self._execution_secret)
+        try:
+            return decision, self.registry.execute(invocation, execution_secret=self._execution_secret)
+        finally:
+            exit_router_execution_context(token)
 
     def _deny(self, invocation: ToolInvocation, reason: str) -> ToolDecision:
         return ToolDecision(
