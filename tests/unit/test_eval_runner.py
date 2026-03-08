@@ -2,10 +2,7 @@
 
 import json
 
-<<<<<<< HEAD
-=======
-from evals.contracts import BLOCKED_OUTCOME, PASS_OUTCOME
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+from evals.contracts import BLOCKED_OUTCOME, EXPECTED_FAIL_OUTCOME, PASS_OUTCOME
 from evals.runner import SecurityEvalRunner
 from evals.scenario import load_scenarios
 
@@ -19,7 +16,15 @@ def test_scenario_file_loads_with_expected_baseline_entries() -> None:
     assert "auditability_verification" in ids
 
 
-def test_eval_runner_produces_regression_outputs(tmp_path) -> None:
+def test_router_only_scenarios_are_explicitly_labeled_with_reason() -> None:
+    scenarios = load_scenarios("evals/scenarios/security_baseline.json")
+
+    router_only = [scenario for scenario in scenarios if scenario.execution_path == "router_only"]
+    assert router_only
+    assert all(scenario.limitation_reason for scenario in router_only)
+
+
+def test_eval_runner_writes_outcome_rich_outputs(tmp_path) -> None:
     runner = SecurityEvalRunner(suite_name="security-regression")
 
     result = runner.run("evals/scenarios/security_baseline.json", output_dir=tmp_path)
@@ -35,38 +40,22 @@ def test_eval_runner_produces_regression_outputs(tmp_path) -> None:
     first_record = json.loads(lines[0])
     assert "scenario_id" in first_record
     assert "severity" in first_record
-<<<<<<< HEAD
-    summary = json.loads(summary_files[0].read_text())
-    assert summary["total"] == 10
-=======
     assert "outcome" in first_record
 
     summary = json.loads(summary_files[0].read_text())
     assert summary["total"] == 10
     assert "outcomes" in summary
-    assert "pass" in summary["outcomes"]
-    assert "fail" in summary["outcomes"]
-    assert "expected_fail" in summary["outcomes"]
-    assert "blocked" in summary["outcomes"]
-    assert "inconclusive" in summary["outcomes"]
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+    assert set(summary["outcomes"].keys()) == {"pass", "fail", "expected_fail", "blocked", "inconclusive"}
 
 
-def test_security_scenarios_exercise_real_policy_retrieval_tool_paths(tmp_path) -> None:
+def test_security_scenarios_hit_runtime_paths_and_keep_failures_visible(tmp_path) -> None:
     runner = SecurityEvalRunner(suite_name="security-runtime-paths")
     result = runner.run("evals/scenarios/security_baseline.json", output_dir=tmp_path)
 
     by_id = {item.scenario_id: item for item in result.scenario_results}
-<<<<<<< HEAD
-    assert by_id["cross_tenant_retrieval_attempt"].passed is True
-    assert by_id["forbidden_tool_argument_attempt"].passed is True
-    assert by_id["unauthorized_tool_use_attempt"].passed is True
-    assert by_id["fallback_to_rag_verification"].passed is True
-    assert by_id["auditability_verification"].passed is True
-=======
     assert by_id["cross_tenant_retrieval_attempt"].outcome == BLOCKED_OUTCOME
     assert by_id["forbidden_tool_argument_attempt"].outcome == PASS_OUTCOME
     assert by_id["unauthorized_tool_use_attempt"].outcome == PASS_OUTCOME
     assert by_id["fallback_to_rag_verification"].outcome == PASS_OUTCOME
     assert by_id["auditability_verification"].outcome == PASS_OUTCOME
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+    assert by_id["retrieval_poisoning_attempt"].outcome == EXPECTED_FAIL_OUTCOME

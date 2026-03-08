@@ -1,16 +1,11 @@
 """Secure tool router that mediates all tool invocations."""
 
-<<<<<<< HEAD
-from dataclasses import dataclass
-import json
-from typing import Callable, Mapping
-=======
 from dataclasses import dataclass, field
 import json
-from typing import Mapping
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+from typing import TYPE_CHECKING, Mapping
 
-from policies.contracts import PolicyEngine
+if TYPE_CHECKING:
+    from policies.contracts import PolicyEngine
 from tools.contracts import (
     ALLOWED_DECISION,
     DENY_DECISION,
@@ -24,22 +19,15 @@ from tools.rate_limit import ToolRateLimiter
 
 @dataclass
 class SecureToolRouter:
-    """Allowlist- and validation-driven tool router.
-
-    This component only decides/mediates; it does not directly expose any path
-    for user input to execute tools without checks.
-    """
+    """Allowlist- and validation-driven tool router."""
 
     registry: ToolRegistry
     rate_limiter: ToolRateLimiter
-    policy_engine: PolicyEngine | None = None
-<<<<<<< HEAD
-=======
+    policy_engine: "PolicyEngine | None" = None
     _execution_secret: object = field(default_factory=object, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.registry.bind_execution_secret(self._execution_secret)
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
 
     def route(self, invocation: ToolInvocation) -> ToolDecision:
         if not invocation.request_id or not invocation.actor_id or not invocation.tenant_id:
@@ -123,23 +111,13 @@ class SecureToolRouter:
     def mediate_and_execute(
         self,
         invocation: ToolInvocation,
-<<<<<<< HEAD
-        executor: Callable[[ToolInvocation], Mapping[str, object]],
-    ) -> tuple[ToolDecision, Mapping[str, object] | None]:
-        """Route first, then execute only if allowed."""
-=======
     ) -> tuple[ToolDecision, Mapping[str, object] | None]:
         """Route first, then execute only if allowed via the centralized registry."""
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
 
         decision = self.route(invocation)
         if decision.status != ALLOWED_DECISION:
             return decision, None
-<<<<<<< HEAD
-        return decision, executor(invocation)
-=======
         return decision, self.registry.execute(invocation, execution_secret=self._execution_secret)
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
 
     def _deny(self, invocation: ToolInvocation, reason: str) -> ToolDecision:
         return ToolDecision(
@@ -161,6 +139,4 @@ class SecureToolRouter:
         return True
 
     def _sanitize_arguments(self, arguments: Mapping[str, object]) -> Mapping[str, object]:
-        """Minimize sensitive value exposure while preserving argument shape evidence."""
-
         return {key: "[redacted]" for key in arguments.keys()}

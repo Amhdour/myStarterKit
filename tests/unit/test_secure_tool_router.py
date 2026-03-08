@@ -1,18 +1,12 @@
 """Tests for secure tool routing decisions and enforcement."""
 
-<<<<<<< HEAD
-=======
 import pytest
 
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
 from tools.contracts import (
     ALLOWED_DECISION,
     DENY_DECISION,
     REQUIRE_CONFIRMATION_DECISION,
-<<<<<<< HEAD
-=======
     DirectToolExecutionDeniedError,
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
     ToolDescriptor,
     ToolInvocation,
 )
@@ -21,15 +15,9 @@ from tools.registry import InMemoryToolRegistry
 from tools.router import SecureToolRouter
 
 
-<<<<<<< HEAD
-def _router_with_tool(tool: ToolDescriptor) -> SecureToolRouter:
-    registry = InMemoryToolRegistry()
-    registry.register(tool)
-=======
 def _router_with_tool(tool: ToolDescriptor, executor=None) -> SecureToolRouter:
     registry = InMemoryToolRegistry()
     registry.register(tool, executor=executor)
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
     return SecureToolRouter(registry=registry, rate_limiter=InMemoryToolRateLimiter())
 
 
@@ -47,29 +35,16 @@ def _invocation(*, tool_name: str, arguments: dict[str, object] | None = None, c
 
 def test_allowlisted_tool_execution() -> None:
     router = _router_with_tool(
-<<<<<<< HEAD
-        ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True)
-    )
-
-    decision, result = router.mediate_and_execute(
-        _invocation(tool_name="ticket_lookup"),
-        executor=lambda _: {"ok": True},
-    )
-
-=======
         ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True),
         executor=lambda _: {"ok": True},
     )
 
     decision, result = router.mediate_and_execute(_invocation(tool_name="ticket_lookup"))
 
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
     assert decision.status == ALLOWED_DECISION
     assert result == {"ok": True}
 
 
-<<<<<<< HEAD
-=======
 def test_direct_registry_execution_is_blocked_loudly() -> None:
     registry = InMemoryToolRegistry()
     registry.register(
@@ -81,7 +56,6 @@ def test_direct_registry_execution_is_blocked_loudly() -> None:
         registry.execute(_invocation(tool_name="ticket_lookup"), execution_secret=object())
 
 
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
 def test_forbidden_tool_denial() -> None:
     router = _router_with_tool(
         ToolDescriptor(name="ticket_lookup", description="lookup", allowed=False)
@@ -92,6 +66,18 @@ def test_forbidden_tool_denial() -> None:
     assert decision.status == DENY_DECISION
     assert "allowlisted" in decision.reason
 
+
+
+
+def test_denied_tool_decision_contains_audit_context() -> None:
+    router = _router_with_tool(ToolDescriptor(name="ticket_lookup", description="lookup", allowed=False))
+
+    decision = router.route(_invocation(tool_name="ticket_lookup"))
+
+    assert decision.status == DENY_DECISION
+    assert decision.tool_name == "ticket_lookup"
+    assert decision.action == "lookup"
+    assert decision.reason
 
 def test_forbidden_field_blocking() -> None:
     router = _router_with_tool(
@@ -169,8 +155,6 @@ def test_tool_router_redacts_argument_values_in_decisions() -> None:
 
     assert decision.status == ALLOWED_DECISION
     assert decision.sanitized_arguments == {"ticket_id": "[redacted]", "email": "[redacted]"}
-<<<<<<< HEAD
-=======
 
 
 def test_router_executes_registered_executor_once_for_allowed_calls() -> None:
@@ -193,10 +177,14 @@ def test_router_executes_registered_executor_once_for_allowed_calls() -> None:
 
 
 class DenyInvokePolicyEngine:
-    def evaluate(self, request_id: str, action: str, context: dict):
-        from policies.contracts import PolicyDecision
+    class _Decision:
+        def __init__(self):
+            self.allow = False
+            self.reason = "tool denied by policy"
+            self.constraints = {}
 
-        return PolicyDecision(request_id=request_id, allow=False, reason="tool denied by policy")
+    def evaluate(self, request_id: str, action: str, context: dict):
+        return self._Decision()
 
 
 def test_tool_denial_by_policy_blocks_execution() -> None:
@@ -223,4 +211,3 @@ def test_tool_denial_by_policy_blocks_execution() -> None:
     assert "policy denied" in decision.reason
     assert result is None
     assert calls == []
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
