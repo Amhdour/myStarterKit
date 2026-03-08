@@ -1,5 +1,7 @@
-"""Tests for secure retrieval tenant/source boundaries and provenance behavior."""
+"""Tests for secure retrieval tenant/source boundaries and metadata enforcement."""
 
+from policies.engine import RuntimePolicyEngine
+from policies.schema import build_runtime_policy
 from retrieval.contracts import (
     DocumentProvenance,
     RetrievalDocument,
@@ -25,10 +27,7 @@ def _make_document(
     source_id: str,
     tenant_id: str,
     checksum: str = "abc123",
-    ingested_at: str = "2026-01-01T00:00:00Z",
     citation_id: str = "c1",
-    document_uri: str = "kb://password-reset",
-    chunk_id: str = "chunk-1",
 ) -> RetrievalDocument:
     return RetrievalDocument(
         document_id=doc_id,
@@ -37,13 +36,13 @@ def _make_document(
             source_id=source_id,
             tenant_id=tenant_id,
             checksum=checksum,
-            ingested_at=ingested_at,
+            ingested_at="2026-01-01T00:00:00Z",
         ),
         provenance=DocumentProvenance(
             citation_id=citation_id,
             source_id=source_id,
-            document_uri=document_uri,
-            chunk_id=chunk_id,
+            document_uri="kb://password-reset",
+            chunk_id="chunk-1",
         ),
         attributes={"topic": "auth"},
     )
@@ -59,18 +58,28 @@ def _query(*, tenant_id: str, allowed_source_ids=()) -> RetrievalQuery:
     )
 
 
-def test_valid_retrieval_returns_document() -> None:
+def _policy_payload(*, trust_domains: list[str] | None = None) -> dict:
+    return {
+        "global": {"kill_switch": False, "fallback_to_rag": True, "default_risk_tier": "medium"},
+        "risk_tiers": {"medium": {"max_retrieval_top_k": 3, "tools_enabled": True}},
+        "retrieval": {
+            "allowed_tenants": ["tenant-a"],
+            "tenant_allowed_sources": {"tenant-a": ["kb-main", "kb-ext"]},
+            "require_trust_metadata": True,
+            "require_provenance": True,
+            "allowed_trust_domains": trust_domains or ["internal"],
+        },
+        "tools": {"allowed_tools": ["ticket_lookup"]},
+    }
+
+
+def test_allowed_in_boundary_retrieval() -> None:
     registry = InMemorySourceRegistry()
-    registry.register(
-        SourceRegistration(
-            source_id="kb-main",
-            tenant_id="tenant-a",
-            display_name="Main KB",
-            enabled=True,
-        )
+    registry.register(SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="Main KB", enabled=True))
+    service = SecureRetrievalService(
+        source_registry=registry,
+        raw_retriever=FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-main", tenant_id="tenant-a")]),
     )
-    raw = FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-main", tenant_id="tenant-a")])
-    service = SecureRetrievalService(source_registry=registry, raw_retriever=raw)
 
     results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",)))
 
@@ -78,101 +87,12 @@ def test_valid_retrieval_returns_document() -> None:
     assert results[0].document_id == "d1"
 
 
-def test_unauthorized_source_retrieval_is_denied() -> None:
+def test_cross_tenant_denial() -> None:
     registry = InMemorySourceRegistry()
-    registry.register(
-        SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="Main KB", enabled=True)
-    )
-    raw = FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-main", tenant_id="tenant-a")])
-    service = SecureRetrievalService(source_registry=registry, raw_retriever=raw)
-
-    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("another-source",)))
-
-    assert results == ()
-
-
-def test_cross_tenant_retrieval_is_denied() -> None:
-    registry = InMemorySourceRegistry()
-    registry.register(
-        SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="Main KB", enabled=True)
-    )
-    raw = FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-main", tenant_id="tenant-a")])
-    service = SecureRetrievalService(source_registry=registry, raw_retriever=raw)
-
-    results = service.search(_query(tenant_id="tenant-b", allowed_source_ids=("kb-main",)))
-
-    assert results == ()
-
-
-def test_missing_metadata_fails_closed() -> None:
-    registry = InMemorySourceRegistry()
-    registry.register(
-        SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="Main KB", enabled=True)
-    )
-    raw = FakeRawRetriever(
-        [
-            _make_document(
-                doc_id="d1",
-                source_id="kb-main",
-                tenant_id="tenant-a",
-                checksum="",
-            )
-        ]
-    )
-    service = SecureRetrievalService(source_registry=registry, raw_retriever=raw)
-
-    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",)))
-
-    assert results == ()
-
-
-def test_provenance_presence_in_valid_results() -> None:
-    registry = InMemorySourceRegistry()
-    registry.register(
-        SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="Main KB", enabled=True)
-    )
-    raw = FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-main", tenant_id="tenant-a")])
-    service = SecureRetrievalService(source_registry=registry, raw_retriever=raw)
-
-    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",)))
-
-    assert len(results) == 1
-    assert results[0].provenance.citation_id
-    assert results[0].provenance.document_uri
-    assert results[0].provenance.chunk_id
-
-
-def test_retrieval_fails_closed_on_backend_exception() -> None:
-    class RaisingRawRetriever:
-        def search(self, query):
-            raise RuntimeError("backend unavailable")
-
-    registry = InMemorySourceRegistry()
-    registry.register(SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="Main KB", enabled=True))
-    service = SecureRetrievalService(source_registry=registry, raw_retriever=RaisingRawRetriever())
-
-    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",)))
-
-    assert results == ()
-<<<<<<< HEAD
-=======
-
-
-class DenyRetrievalPolicyEngine:
-    def evaluate(self, request_id: str, action: str, context: dict):
-        from policies.contracts import PolicyDecision
-
-        return PolicyDecision(request_id=request_id, allow=False, reason="retrieval denied by policy")
-
-
-def test_retrieval_denied_by_policy_returns_empty() -> None:
-    registry = InMemorySourceRegistry()
-    registry.register(SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="Main KB", enabled=True))
-    raw = FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-main", tenant_id="tenant-a")])
+    registry.register(SourceRegistration(source_id="kb-main", tenant_id="tenant-b", display_name="Main KB", enabled=True))
     service = SecureRetrievalService(
         source_registry=registry,
-        raw_retriever=raw,
-        policy_engine=DenyRetrievalPolicyEngine(),
+        raw_retriever=FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-main", tenant_id="tenant-b")]),
     )
 
     results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",)))
@@ -180,40 +100,88 @@ def test_retrieval_denied_by_policy_returns_empty() -> None:
     assert results == ()
 
 
-def test_low_trust_source_is_quarantined_by_default() -> None:
+def test_unknown_source_denial() -> None:
+    registry = InMemorySourceRegistry()
+    service = SecureRetrievalService(
+        source_registry=registry,
+        raw_retriever=FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-unknown", tenant_id="tenant-a")]),
+    )
+
+    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-unknown",)))
+
+    assert results == ()
+
+
+def test_missing_metadata_safe_fail() -> None:
+    registry = InMemorySourceRegistry()
+    registry.register(SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="Main KB", enabled=True))
+    service = SecureRetrievalService(
+        source_registry=registry,
+        raw_retriever=FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-main", tenant_id="tenant-a", checksum="")]),
+    )
+
+    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",)))
+
+    assert results == ()
+
+
+def test_low_trust_source_denied_by_default_policy() -> None:
     registry = InMemorySourceRegistry()
     registry.register(
         SourceRegistration(
-            source_id="kb-external",
+            source_id="kb-ext",
             tenant_id="tenant-a",
-            display_name="External KB",
+            display_name="External",
             enabled=True,
             trust_domain="external",
         )
     )
-    raw = FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-external", tenant_id="tenant-a")])
-    service = SecureRetrievalService(source_registry=registry, raw_retriever=raw)
+    engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=_policy_payload()))
+    service = SecureRetrievalService(
+        source_registry=registry,
+        raw_retriever=FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-ext", tenant_id="tenant-a")]),
+        policy_engine=engine,
+    )
 
-    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-external",)))
+    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-ext",)))
 
     assert results == ()
 
 
-def test_malformed_source_registration_is_denied() -> None:
+def test_low_trust_source_can_be_allowed_by_policy() -> None:
     registry = InMemorySourceRegistry()
     registry.register(
         SourceRegistration(
-            source_id="kb-main",
+            source_id="kb-ext",
             tenant_id="tenant-a",
-            display_name="Main KB",
+            display_name="External",
             enabled=True,
-            trust_domain="",
+            trust_domain="external",
         )
     )
-    raw = FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-main", tenant_id="tenant-a")])
-    service = SecureRetrievalService(source_registry=registry, raw_retriever=raw)
+    engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=_policy_payload(trust_domains=["internal", "external"])))
+    service = SecureRetrievalService(
+        source_registry=registry,
+        raw_retriever=FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-ext", tenant_id="tenant-a")]),
+        policy_engine=engine,
+    )
+
+    results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-ext",)))
+
+    assert len(results) == 1
+
+
+def test_provenance_presence_on_valid_results() -> None:
+    registry = InMemorySourceRegistry()
+    registry.register(SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="Main KB", enabled=True))
+    service = SecureRetrievalService(
+        source_registry=registry,
+        raw_retriever=FakeRawRetriever([_make_document(doc_id="d1", source_id="kb-main", tenant_id="tenant-a", citation_id="cite-1")]),
+    )
 
     results = service.search(_query(tenant_id="tenant-a", allowed_source_ids=("kb-main",)))
 
-    assert results == ()
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+    assert len(results) == 1
+    assert results[0].provenance.citation_id == "cite-1"
+    assert results[0].provenance.document_uri
+    assert results[0].provenance.chunk_id

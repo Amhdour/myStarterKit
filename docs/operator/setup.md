@@ -41,3 +41,21 @@ Use `telemetry.audit.sinks.JsonlAuditSink` in runtime entrypoint wiring to persi
 - Treat missing eval/audit/policy artifacts as readiness failures.
 - Keep policy bundles environment-specific and versioned.
 - Do not bypass orchestrator policy checkpoints in runtime integrations.
+
+
+## 6) Quick Demo Walkthrough
+
+### Normal request
+```bash
+python -c "from evals.runtime import build_runtime_fixture, make_request; f=build_runtime_fixture(); r=f.orchestrator.run(make_request(request_id='ops-demo-ok', tenant_id='tenant-a', user_text='help')); print(r.status)"
+```
+
+### Guarded action (denied tool)
+```bash
+python -c "from evals.runtime import build_runtime_fixture, make_invocation; f=build_runtime_fixture(); d=f.tool_router.route(make_invocation(request_id='ops-demo-deny', tenant_id='tenant-a', tool_name='admin_shell', action='exec', arguments={'command':'whoami'})); print(d.status, d.reason)"
+```
+
+### Launch gate summary
+```bash
+python -c "from pathlib import Path; from launch_gate.engine import SecurityLaunchGate; print(SecurityLaunchGate(repo_root=Path('.')).evaluate().summary)"
+```

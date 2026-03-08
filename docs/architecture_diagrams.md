@@ -2,6 +2,8 @@
 
 This document visualizes the **implemented** runtime architecture and trust boundaries in this repository.
 
+For boundary-by-boundary control/risk/logging details, see `docs/trust_boundaries.md`.
+
 ## 1) System Architecture Overview
 
 ```mermaid

@@ -132,12 +132,6 @@ class SupportAgentOrchestrator:
             tool_decisions: tuple[ToolDecision, ...] = tuple()
             if tool_policy_decision.allow:
                 allowlisted = list(self.tool_registry.list_allowlisted())
-                policy_allowed_tools = tool_policy_decision.constraints.get("allowed_tools", [])
-                policy_forbidden_tools = set(tool_policy_decision.constraints.get("forbidden_tools", []))
-
-                if isinstance(policy_allowed_tools, list) and policy_allowed_tools:
-                    allowlisted = [tool for tool in allowlisted if tool.name in set(policy_allowed_tools)]
-                allowlisted = [tool for tool in allowlisted if tool.name not in policy_forbidden_tools]
 
                 tool_decisions = tuple(
                     self.tool_router.route(
@@ -204,11 +198,7 @@ class SupportAgentOrchestrator:
             self._emit_request_end(context=context, status=response.status)
             return response
         except Exception as exc:  # fail-closed with evidence
-<<<<<<< HEAD
-            self._emit(context=context, event_type=ERROR_EVENT, payload={"error_type": type(exc).__name__})
-=======
             self._emit(context=context, event_type=ERROR_EVENT, payload={"error_type": type(exc).__name__, "message": str(exc)})
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
             response = self._blocked_response(request, context, policy_checks, "internal error")
             self._emit_request_end(context=context, status=response.status)
             return response

@@ -67,34 +67,55 @@ Not included:
 8. Tool router returns **decisions only** (never direct execution).
 9. Response returns structured output + trace for auditability.
 
-## Quick Start
+## Quick Start (Reviewer, ~10 minutes)
 
-1. **Create a virtual environment** (example with Python):
+1. **Setup**
    ```bash
    python -m venv .venv
    source .venv/bin/activate
-   ```
-2. **Install baseline dependencies**:
-   ```bash
    pip install -r requirements-dev.txt
-   ```
-3. **Copy environment template**:
-   ```bash
    cp .env.example .env
    ```
-4. **Review config templates** in `config/` and adapt for your environment.
-5. **Run tests**:
+2. **Minimal validation**
    ```bash
-   pytest
+   pytest -q
    ```
-6. **Run baseline security eval scenarios**:
+3. **Run baseline evals (writes evidence artifacts)**
    ```bash
    python -m evals.runner
+   ls -1 artifacts/logs/evals
    ```
-7. **Run launch gate readiness evaluation**:
+4. **Run launch gate (reads policy + audit/eval evidence)**
    ```bash
    python -m launch_gate.engine
    ```
+
+### Minimal request-flow demo
+
+> Uses repository runtime fixture wiring (`evals/runtime.py`) so reviewers can exercise real orchestrator/policy/retrieval/tool paths quickly.
+
+#### A) Normal request (orchestrator path)
+```bash
+python -c "from evals.runtime import build_runtime_fixture, make_request; f=build_runtime_fixture(); r=f.orchestrator.run(make_request(request_id='demo-ok', tenant_id='tenant-a', user_text='How do I reset my password?')); print('status:', r.status); print('retrieved_docs:', list(r.trace.retrieved_document_ids)); print('events:', [e.event_type for e in f.audit_sink.events])"
+```
+
+#### B) Guarded action (denied tool invocation)
+```bash
+python -c "from evals.runtime import build_runtime_fixture, make_invocation; f=build_runtime_fixture(); d=f.tool_router.route(make_invocation(request_id='demo-deny', tenant_id='tenant-a', tool_name='admin_shell', action='exec', arguments={'command':'whoami'})); print('tool_decision:', d.status); print('reason:', d.reason)"
+```
+
+#### C) Launch-gate output example
+```bash
+python -c "from pathlib import Path; from launch_gate.engine import SecurityLaunchGate; report=SecurityLaunchGate(repo_root=Path('.')).evaluate(); print('status:', report.status); print('summary:', report.summary); [print(f'- {c.check_name}:', 'PASS' if c.passed else 'FAIL') for c in report.checks]"
+```
+
+### Where to inspect evidence
+
+- Eval scenario logs: `artifacts/logs/evals/*.jsonl`
+- Eval summaries: `artifacts/logs/evals/*.summary.json`
+- Audit logs (if JSONL sink is wired in your runtime entrypoint): `artifacts/logs/audit.jsonl`
+- Replay artifacts (if generated): `artifacts/logs/replay*.json`
+- Launch-gate policy input: `policies/bundles/default/policy.json`
 
 ## Development Principles
 
@@ -112,11 +133,10 @@ Not included:
 
 ## Documentation & Evidence Pack
 
-<<<<<<< HEAD
-=======
 - Architecture deep-dive: `docs/architecture.md`
 - Architecture diagrams: `docs/architecture_diagrams.md`
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
+- Trust boundaries: `docs/trust_boundaries.md`
+- Threat model: `docs/threat_model.md`
 - Operator/developer setup: `docs/operator/setup.md`
 - Security reviewer guide: `docs/reviewer/security_review_guide.md`
 - Portfolio summary: `docs/portfolio/project_summary.md`

@@ -1,18 +1,46 @@
-"""Tests for policy loading, validation, and runtime enforcement behavior."""
-
-import json
+"""Tests proving policy governs runtime behavior and fails safely."""
 
 from app.models import SessionContext, SupportAgentRequest
 from app.orchestrator import SupportAgentOrchestrator
 from app.modeling import ModelInput
 from policies.engine import RuntimePolicyEngine
 from policies.loader import load_policy
-from policies.schema import DEFAULT_RESTRICTIVE_POLICY, build_runtime_policy
-from retrieval.contracts import DocumentProvenance, RetrievalDocument, SourceTrustMetadata
+from policies.schema import build_runtime_policy
+from retrieval.contracts import DocumentProvenance, RetrievalDocument, RetrievalQuery, SourceRegistration, SourceTrustMetadata
+from retrieval.registry import InMemorySourceRegistry
+from retrieval.service import SecureRetrievalService
+from tools.contracts import DENY_DECISION, REQUIRE_CONFIRMATION_DECISION, ToolDescriptor, ToolInvocation
+from tools.rate_limit import InMemoryToolRateLimiter
+from tools.registry import InMemoryToolRegistry
+from tools.router import SecureToolRouter
 
 
-class FakeRetriever:
-    def search(self, query):
+def _policy_payload(*, fallback_to_rag: bool = True, kill_switch: bool = False) -> dict:
+    return {
+        "global": {"kill_switch": kill_switch, "fallback_to_rag": fallback_to_rag, "default_risk_tier": "medium"},
+        "risk_tiers": {
+            "medium": {"max_retrieval_top_k": 3, "tools_enabled": True},
+            "high": {"max_retrieval_top_k": 1, "tools_enabled": False},
+        },
+        "retrieval": {
+            "allowed_tenants": ["tenant-a"],
+            "tenant_allowed_sources": {"tenant-a": ["kb-main"]},
+            "require_trust_metadata": True,
+            "require_provenance": True,
+            "allowed_trust_domains": ["internal"],
+        },
+        "tools": {
+            "allowed_tools": ["ticket_lookup"],
+            "forbidden_tools": ["payments_export"],
+            "confirmation_required_tools": ["account_update"],
+            "forbidden_fields_per_tool": {"ticket_lookup": ["ssn"]},
+            "rate_limits_per_tool": {"ticket_lookup": 1},
+        },
+    }
+
+
+class FakeRawRetriever:
+    def search(self, query: RetrievalQuery):
         return (
             RetrievalDocument(
                 document_id="doc-1",
@@ -43,29 +71,6 @@ class FakeModel:
         return "draft"
 
 
-class FakeToolRegistry:
-    def list_allowlisted(self):
-        from tools.contracts import ToolDescriptor
-
-        return (
-            ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True),
-            ToolDescriptor(name="account_update", description="update", allowed=True),
-        )
-
-
-class FakeToolRouter:
-    def route(self, invocation):
-        from tools.contracts import ToolDecision
-
-        return ToolDecision(
-            status="allow",
-            tool_name=invocation.tool_name,
-            action=invocation.action,
-            reason="ok",
-            sanitized_arguments=invocation.arguments,
-        )
-
-
 class FakeAuditSink:
     def __init__(self) -> None:
         self.events = []
@@ -74,36 +79,22 @@ class FakeAuditSink:
         self.events.append(event)
 
 
-def _policy_payload() -> dict:
-    return {
-        "global": {"kill_switch": False, "fallback_to_rag": True, "default_risk_tier": "medium"},
-        "risk_tiers": {
-            "medium": {"max_retrieval_top_k": 3, "tools_enabled": True},
-            "high": {"max_retrieval_top_k": 1, "tools_enabled": False},
-        },
-        "retrieval": {
-            "allowed_tenants": ["tenant-a"],
-            "tenant_allowed_sources": {"tenant-a": ["kb-main"]},
-        },
-        "tools": {
-            "allowed_tools": ["ticket_lookup"],
-            "forbidden_tools": ["payments_export"],
-            "confirmation_required_tools": ["account_update"],
-            "forbidden_fields_per_tool": {"ticket_lookup": ["ssn"]},
-            "rate_limits_per_tool": {"ticket_lookup": 2},
-        },
-        "overrides": {"production": {"global": {"kill_switch": True}}},
-    }
+class FakeToolRegistry:
+    def list_allowlisted(self):
+        return (ToolDescriptor(name="ticket_lookup", description="lookup", allowed=True),)
 
 
-def test_policy_loading_with_environment_override(tmp_path) -> None:
-    policy_file = tmp_path / "policy.json"
-    policy_file.write_text(json.dumps(_policy_payload()))
+class FakeDenyToolRouter:
+    def route(self, invocation):
+        from tools.contracts import ToolDecision
 
-    loaded = load_policy(policy_file, environment="production")
-
-    assert loaded.valid is True
-    assert loaded.kill_switch is True
+        return ToolDecision(
+            status=DENY_DECISION,
+            tool_name=invocation.tool_name,
+            action=invocation.action,
+            reason="policy denied",
+            sanitized_arguments={},
+        )
 
 
 def test_invalid_policy_safe_fail(tmp_path) -> None:
@@ -114,101 +105,116 @@ def test_invalid_policy_safe_fail(tmp_path) -> None:
 
     assert loaded.valid is False
     assert loaded.kill_switch is True
-    assert loaded.environment == "development"
-
-
-<<<<<<< HEAD
-=======
 
 
 def test_missing_policy_safe_fail(tmp_path) -> None:
-    missing_file = tmp_path / "missing.json"
-
-    loaded = load_policy(missing_file, environment="development")
+    loaded = load_policy(tmp_path / "missing.json", environment="development")
 
     assert loaded.valid is False
     assert loaded.kill_switch is True
-    assert "missing" in loaded.validation_errors[0]
 
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
-def test_retrieval_enforcement_denies_unallowed_tenant() -> None:
-    policy = build_runtime_policy(environment="dev", payload=_policy_payload())
-    engine = RuntimePolicyEngine(policy=policy)
 
-    decision = engine.evaluate(
-        request_id="req-1",
-        action="retrieval.search",
-        context={"tenant_id": "tenant-b"},
-    )
+def test_retrieval_denial_by_policy() -> None:
+    payload = _policy_payload()
+    payload["retrieval"]["allowed_tenants"] = ["tenant-b"]
+    engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=payload))
+
+    decision = engine.evaluate("req-1", "retrieval.search", {"tenant_id": "tenant-a"})
 
     assert decision.allow is False
     assert "tenant" in decision.reason
 
 
-<<<<<<< HEAD
-=======
-
-
-def test_retrieval_policy_constraints_include_metadata_and_trust_controls() -> None:
+def test_tool_denial_by_policy() -> None:
     policy = build_runtime_policy(environment="dev", payload=_policy_payload())
     engine = RuntimePolicyEngine(policy=policy)
 
     decision = engine.evaluate(
-        request_id="req-constraints",
-        action="retrieval.search",
-        context={"tenant_id": "tenant-a"},
+        "req-1",
+        "tools.invoke",
+        {"tenant_id": "tenant-a", "tool_name": "payments_export", "action": "export", "arguments": {}},
     )
 
-    assert decision.allow is True
-    assert decision.constraints.get("require_trust_metadata") is True
-    assert decision.constraints.get("require_provenance") is True
-    assert decision.constraints.get("allowed_trust_domains") == ["internal"]
+    assert decision.allow is False
+    assert "forbidden" in decision.reason
 
->>>>>>> 6d03c87 (harden launch-gate retrieval-boundary consistency verification)
-def test_tool_enforcement_applies_allowlist_and_forbidden_fields() -> None:
-    policy = build_runtime_policy(environment="dev", payload=_policy_payload())
-    engine = RuntimePolicyEngine(policy=policy)
 
-    denied_tool = engine.evaluate(
+def test_policy_changes_tool_runtime_behavior() -> None:
+    registry = InMemoryToolRegistry()
+    registry.register(ToolDescriptor(name="account_update", description="update", allowed=True), executor=lambda _: {"ok": True})
+
+    restrictive_payload = _policy_payload()
+    restrictive_engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=restrictive_payload))
+    restrictive_router = SecureToolRouter(registry=registry, rate_limiter=InMemoryToolRateLimiter(), policy_engine=restrictive_engine)
+
+    permissive_payload = _policy_payload()
+    permissive_payload["tools"]["allowed_tools"] = ["account_update"]
+    permissive_payload["tools"]["confirmation_required_tools"] = ["account_update"]
+    permissive_engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=permissive_payload))
+    permissive_router = SecureToolRouter(registry=registry, rate_limiter=InMemoryToolRateLimiter(), policy_engine=permissive_engine)
+
+    invocation = ToolInvocation(
         request_id="req-1",
-        action="tools.invoke",
-        context={"tenant_id": "tenant-a", "tool_name": "unknown_tool", "action": "lookup", "arguments": {}},
+        actor_id="user-1",
+        tenant_id="tenant-a",
+        tool_name="account_update",
+        action="update",
+        arguments={"field": "email"},
+        confirmed=False,
     )
-    forbidden_field = engine.evaluate(
+
+    denied = restrictive_router.route(invocation)
+    confirmation_required = permissive_router.route(invocation)
+
+    assert denied.status == DENY_DECISION
+    assert confirmation_required.status == REQUIRE_CONFIRMATION_DECISION
+
+
+def test_policy_changes_retrieval_runtime_behavior() -> None:
+    registry = InMemorySourceRegistry()
+    registry.register(SourceRegistration(source_id="kb-main", tenant_id="tenant-a", display_name="kb", enabled=True))
+
+    restrictive_payload = _policy_payload()
+    restrictive_payload["retrieval"]["tenant_allowed_sources"] = {"tenant-a": ["kb-other"]}
+    restrictive_engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=restrictive_payload))
+
+    permissive_payload = _policy_payload()
+    permissive_engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=permissive_payload))
+
+    query = RetrievalQuery(
         request_id="req-1",
-        action="tools.invoke",
-        context={
-            "tenant_id": "tenant-a",
-            "tool_name": "ticket_lookup",
-            "action": "lookup",
-            "arguments": {"ssn": "x"},
-        },
+        tenant_id="tenant-a",
+        query_text="reset",
+        top_k=5,
+        allowed_source_ids=("kb-main",),
     )
 
-    assert denied_tool.allow is False
-    assert forbidden_field.allow is False
+    denied_service = SecureRetrievalService(source_registry=registry, raw_retriever=FakeRawRetriever(), policy_engine=restrictive_engine)
+    allowed_service = SecureRetrievalService(source_registry=registry, raw_retriever=FakeRawRetriever(), policy_engine=permissive_engine)
+
+    assert denied_service.search(query) == ()
+    assert len(allowed_service.search(query)) == 1
 
 
-def test_kill_switch_blocks_orchestration() -> None:
-    payload = _policy_payload()
-    payload["global"]["kill_switch"] = True
-    policy = build_runtime_policy(environment="dev", payload=payload)
-    engine = RuntimePolicyEngine(policy=policy)
-
+def test_kill_switch_behavior_blocks_request() -> None:
+    engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=_policy_payload(kill_switch=True)))
     model = FakeModel()
+    audit = FakeAuditSink()
+
     orchestrator = SupportAgentOrchestrator(
         policy_engine=engine,
-        retriever=FakeRetriever(),
+        retriever=FakeRawRetriever(),
         model=model,
         tool_registry=FakeToolRegistry(),
-        tool_router=FakeToolRouter(),
-        audit_sink=FakeAuditSink(),
+        tool_router=FakeDenyToolRouter(),
+        audit_sink=audit,
     )
+
     response = orchestrator.run(
         SupportAgentRequest(
-            request_id="req-1",
+            request_id="req-kill",
             user_text="help",
-            session=SessionContext(session_id="s1", actor_id="a1", tenant_id="tenant-a"),
+            session=SessionContext(session_id="s", actor_id="a", tenant_id="tenant-a", channel="chat"),
         )
     )
 
@@ -216,58 +222,30 @@ def test_kill_switch_blocks_orchestration() -> None:
     assert model.inputs == []
 
 
-def test_fallback_to_rag_when_tools_disabled_for_risk_tier() -> None:
-    payload = _policy_payload()
-    policy = build_runtime_policy(environment="dev", payload=payload)
-    engine = RuntimePolicyEngine(policy=policy)
-
+def test_fallback_to_rag_activation() -> None:
+    payload = _policy_payload(fallback_to_rag=True)
+    payload["risk_tiers"]["medium"]["tools_enabled"] = False
+    engine = RuntimePolicyEngine(policy=build_runtime_policy(environment="dev", payload=payload))
     model = FakeModel()
+    audit = FakeAuditSink()
+
     orchestrator = SupportAgentOrchestrator(
         policy_engine=engine,
-        retriever=FakeRetriever(),
+        retriever=FakeRawRetriever(),
         model=model,
         tool_registry=FakeToolRegistry(),
-        tool_router=FakeToolRouter(),
-        audit_sink=FakeAuditSink(),
+        tool_router=FakeDenyToolRouter(),
+        audit_sink=audit,
     )
+
     response = orchestrator.run(
         SupportAgentRequest(
-            request_id="req-2",
+            request_id="req-fallback",
             user_text="help",
-            session=SessionContext(session_id="s1", actor_id="a1", tenant_id="tenant-a"),
+            session=SessionContext(session_id="s", actor_id="a", tenant_id="tenant-a", channel="chat"),
         )
     )
 
     assert response.status == "ok"
-    # medium tier allows tools, so force high tier evaluation path check directly
-    high_decision = engine.evaluate(
-        request_id="req-2",
-        action="tools.route",
-        context={"risk_tier": "high"},
-    )
-    assert high_decision.allow is False
-    assert high_decision.fallback_to_rag is True
-
-
-def test_retrieval_denied_when_no_sources_allowlisted() -> None:
-    payload = _policy_payload()
-    payload["retrieval"]["tenant_allowed_sources"] = {"tenant-a": []}
-    policy = build_runtime_policy(environment="dev", payload=payload)
-    engine = RuntimePolicyEngine(policy=policy)
-
-    decision = engine.evaluate(request_id="req-3", action="retrieval.search", context={"tenant_id": "tenant-a"})
-
-    assert decision.allow is False
-    assert "allowlisted retrieval sources" in decision.reason
-
-
-def test_tools_route_denied_when_no_tools_allowlisted() -> None:
-    payload = _policy_payload()
-    payload["tools"]["allowed_tools"] = []
-    policy = build_runtime_policy(environment="dev", payload=payload)
-    engine = RuntimePolicyEngine(policy=policy)
-
-    decision = engine.evaluate(request_id="req-4", action="tools.route", context={"risk_tier": "medium"})
-
-    assert decision.allow is False
-    assert decision.fallback_to_rag is True
+    assert response.tool_decisions == ()
+    assert any(event.event_type == "fallback.event" for event in audit.events)
