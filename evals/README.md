@@ -21,3 +21,6 @@ Run example:
 ```bash
 python -m evals.runner
 ```
+
+
+See also: `docs/adversarial_evals.md` for explicit attack-scenario coverage and defended/deferred boundaries.

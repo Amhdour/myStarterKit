@@ -1,5 +1,16 @@
 """Canonical actor identity contracts for secure runtime flows."""
 
+from identity.iam import (
+    Hs256IssuerConfig,
+    Hs256JwtVerifier,
+    IamIdentityEnvelope,
+    IamIdentityMapper,
+    IamIntegrationProfile,
+    IdentityMappingError,
+    TokenValidationError,
+    normalize_claims,
+    verify_identity_for_policy,
+)
 from identity.models import (
     ActorIdentity,
     ActorType,
@@ -13,6 +24,15 @@ from identity.models import (
 )
 
 __all__ = [
+    "Hs256IssuerConfig",
+    "Hs256JwtVerifier",
+    "IamIntegrationProfile",
+    "IamIdentityMapper",
+    "IamIdentityEnvelope",
+    "TokenValidationError",
+    "IdentityMappingError",
+    "normalize_claims",
+    "verify_identity_for_policy",
     "ActorIdentity",
     "ActorType",
     "DelegationGrant",

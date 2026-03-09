@@ -1,0 +1,14 @@
+{
+  "topology": {
+    "services": [
+      {"name": "support-app", "boundary": "app_runtime", "depends_on": ["policy-bundle", "retrieval-service", "iam-provider", "audit-sink"]},
+      {"name": "policy-bundle", "boundary": "policy_bundle_delivery", "depends_on": []},
+      {"name": "retrieval-service", "boundary": "retrieval_backend", "depends_on": []},
+      {"name": "audit-sink", "boundary": "telemetry_sink", "depends_on": ["audit-replay-storage"]},
+      {"name": "audit-replay-storage", "boundary": "audit_replay_storage", "depends_on": []},
+      {"name": "high-risk-sandbox", "boundary": "high_risk_tool_sandbox", "depends_on": ["secret-source"]},
+      {"name": "secret-source", "boundary": "secret_source", "depends_on": []},
+      {"name": "iam-provider", "boundary": "iam_provider", "depends_on": []}
+    ]
+  }
+}

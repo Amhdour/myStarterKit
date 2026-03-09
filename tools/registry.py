@@ -15,6 +15,7 @@ from tools.execution_guard import (
     assert_wrapped_executor_callsite,
     current_router_execution_secret,
 )
+from tools.isolation import ToolRiskClass
 
 
 @dataclass
@@ -52,6 +53,12 @@ class InMemoryToolRegistry(ToolRegistry):
         ):
             raise DirectToolExecutionDeniedError(
                 "direct tool execution is blocked: use SecureToolRouter.mediate_and_execute"
+            )
+
+        descriptor = self._tools.get(invocation.tool_name)
+        if descriptor is not None and descriptor.risk_class == ToolRiskClass.HIGH:
+            raise DirectToolExecutionDeniedError(
+                "high-risk tool direct execution is blocked: use SecureToolRouter sandbox path"
             )
 
         executor = self._executors.get(invocation.tool_name)

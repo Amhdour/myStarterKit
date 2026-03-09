@@ -10,7 +10,7 @@ from evals.scenario import load_scenarios
 def test_scenario_file_loads_with_expected_baseline_entries() -> None:
     scenarios = load_scenarios("evals/scenarios/security_baseline.json")
 
-    assert len(scenarios) == 15
+    assert len(scenarios) == 24
     ids = {scenario.scenario_id for scenario in scenarios}
     assert "prompt_injection_direct" in ids
     assert "auditability_verification" in ids
@@ -18,6 +18,9 @@ def test_scenario_file_loads_with_expected_baseline_entries() -> None:
     assert "policy_bypass_tenant_spoofing_request" in ids
     assert "allowed_tool_execution_path" in ids
     assert "confirmation_required_tool_flow" in ids
+    assert "adversarial_forged_actor_identity" in ids
+    assert "adversarial_capability_token_replay" in ids
+    assert "adversarial_policy_drift_unsafe_allow" in ids
 
 
 def test_router_only_scenarios_are_explicitly_labeled_with_reason() -> None:
@@ -33,21 +36,21 @@ def test_eval_runner_writes_outcome_rich_outputs(tmp_path) -> None:
 
     result = runner.run("evals/scenarios/security_baseline.json", output_dir=tmp_path)
 
-    assert len(result.scenario_results) == 15
+    assert len(result.scenario_results) == 24
     jsonl_files = list(tmp_path.glob("security-regression-*.jsonl"))
     summary_files = list(tmp_path.glob("security-regression-*.summary.json"))
     assert len(jsonl_files) == 1
     assert len(summary_files) == 1
 
     lines = jsonl_files[0].read_text().strip().splitlines()
-    assert len(lines) == 15
+    assert len(lines) == 24
     first_record = json.loads(lines[0])
     assert "scenario_id" in first_record
     assert "severity" in first_record
     assert "outcome" in first_record
 
     summary = json.loads(summary_files[0].read_text())
-    assert summary["total"] == 15
+    assert summary["total"] == 24
     assert "outcomes" in summary
     assert set(summary["outcomes"].keys()) == {"pass", "fail", "expected_fail", "blocked", "inconclusive"}
 
@@ -98,6 +101,15 @@ def test_security_scenarios_hit_runtime_paths_and_keep_failures_visible(tmp_path
     assert by_id["retrieval_poisoning_attempt"].outcome == EXPECTED_FAIL_OUTCOME
     assert by_id["allowed_tool_execution_path"].outcome == PASS_OUTCOME
     assert by_id["confirmation_required_tool_flow"].outcome == PASS_OUTCOME
+    assert by_id["adversarial_prompt_injection_tool_bypass"].outcome == PASS_OUTCOME
+    assert by_id["adversarial_mcp_response_manipulation"].outcome == PASS_OUTCOME
+    assert by_id["adversarial_mcp_oversized_payload"].outcome == PASS_OUTCOME
+    assert by_id["adversarial_capability_token_replay"].outcome == PASS_OUTCOME
+    assert by_id["adversarial_unsafe_high_risk_tool_request"].outcome == PASS_OUTCOME
+    assert by_id["adversarial_forged_actor_identity"].outcome == PASS_OUTCOME
+    assert by_id["adversarial_delegation_scope_escalation"].outcome == PASS_OUTCOME
+    assert by_id["adversarial_secret_leakage_attempt"].outcome == PASS_OUTCOME
+    assert by_id["adversarial_policy_drift_unsafe_allow"].outcome == EXPECTED_FAIL_OUTCOME
 
 
 def test_eval_outputs_include_decision_logs_and_concise_summaries(tmp_path) -> None:
@@ -144,12 +156,15 @@ def test_tool_execution_scenarios_report_execution_state_and_results(tmp_path) -
     allowed = by_id["allowed_tool_execution_path"]
     denied = by_id["forbidden_tool_argument_attempt"]
     confirmation = by_id["confirmation_required_tool_flow"]
+    high_risk = by_id["adversarial_unsafe_high_risk_tool_request"]
 
     assert allowed.evidence["execution_performed"] is True
     assert allowed.evidence["execution_result"]["status"] == "ok"
     assert denied.evidence["execution_performed"] is False
     assert confirmation.evidence["execution_performed"] is False
     assert confirmation.evidence["tool_decision_status"] == "require_confirmation"
+    assert high_risk.evidence["execution_performed"] is False
+    assert high_risk.evidence["tool_decision_status"] == "deny"
 
 
 def test_eval_runner_supports_fixed_stamp_for_reproducible_artifact_names(tmp_path) -> None:

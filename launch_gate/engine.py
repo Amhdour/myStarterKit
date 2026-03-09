@@ -104,6 +104,33 @@ class LaunchGateConfig:
     incident_playbook_path: str = "docs/incident_response_playbooks.md"
     incident_evidence_summary_path: str = "docs/evidence_pack/incident_readiness_summary.md"
     drift_manifest_path: str = "config/security_drift_manifest.json"
+    deployment_profiles_path: str = "config/deployments/environment_profiles.json"
+    deployment_topology_path: str = "config/deployments/topology.spec.json"
+    deployment_dependency_inventory_path: str = "config/deployments/security_dependency_inventory.json"
+    deployment_profile_doc_path: str = "docs/deployment/environment_profiles.md"
+    infrastructure_boundaries_path: str = "config/infrastructure_boundaries.json"
+    iam_module_path: str = "identity/iam.py"
+    iam_doc_path: str = "docs/iam_integration.md"
+    iam_test_path: str = "tests/unit/test_iam_integration.py"
+    secrets_module_path: str = "app/secrets.py"
+    secrets_doc_path: str = "docs/security_secrets.md"
+    settings_template_path: str = "config/settings.template.yaml"
+    startup_path: str = "main.py"
+    scenario_file_path: str = "evals/scenarios/security_baseline.json"
+    required_adversarial_scenario_outcomes: Mapping[str, str] = field(
+        default_factory=lambda: {
+            "adversarial_prompt_injection_tool_bypass": "pass",
+            "adversarial_forged_actor_identity": "pass",
+            "adversarial_delegation_scope_escalation": "pass",
+            "adversarial_mcp_response_manipulation": "pass",
+            "adversarial_mcp_oversized_payload": "pass",
+            "adversarial_capability_token_replay": "pass",
+            "adversarial_unsafe_high_risk_tool_request": "pass",
+            "adversarial_secret_leakage_attempt": "pass",
+            "adversarial_policy_drift_unsafe_allow": "expected_fail",
+        }
+    )
+    production_attestation_path: str = "docs/evidence_pack/production_deployment_attestation.md"
 
 
 @dataclass(frozen=True)
@@ -135,7 +162,13 @@ class SecurityLaunchGate:
             self._check_fallback_readiness(),
             self._check_high_risk_tool_isolation_readiness(),
             self._check_integration_inventory_completeness(),
+            self._check_infrastructure_boundary_evidence(),
+            self._check_iam_integration_readiness(),
+            self._check_secrets_manager_readiness(),
+            self._check_adversarial_eval_coverage_readiness(),
             self._check_incident_readiness_artifacts(),
+            self._check_deployment_architecture_evidence(),
+            self._check_production_deployment_attestation(),
             self._check_drift_detection_readiness(),
         ]
 
@@ -156,7 +189,13 @@ class SecurityLaunchGate:
             self._build_scorecard_category("kill_switch_readiness", ("kill_switch_readiness",), by_name),
             self._build_scorecard_category("high_risk_tool_isolation", ("high_risk_tool_isolation_readiness",), by_name),
             self._build_scorecard_category("integration_inventory", ("integration_inventory_completeness",), by_name),
+            self._build_scorecard_category("infrastructure_boundaries", ("infrastructure_boundary_evidence",), by_name),
+            self._build_scorecard_category("iam_integration", ("iam_integration_readiness",), by_name),
+            self._build_scorecard_category("secrets_manager", ("secrets_manager_readiness",), by_name),
+            self._build_scorecard_category("adversarial_eval_coverage", ("adversarial_eval_coverage_readiness",), by_name),
             self._build_scorecard_category("incident_readiness", ("incident_readiness_artifacts",), by_name),
+            self._build_scorecard_category("deployment_architecture", ("deployment_architecture_evidence",), by_name),
+            self._build_scorecard_category("production_deployment", ("production_deployment_attestation",), by_name),
             self._build_scorecard_category("drift_detection", ("drift_detection_readiness",), by_name),
         )
 
@@ -171,7 +210,12 @@ class SecurityLaunchGate:
             "eval_suite_evidence",
             "high_risk_tool_isolation_readiness",
             "integration_inventory_completeness",
+            "infrastructure_boundary_evidence",
+            "iam_integration_readiness",
+            "secrets_manager_readiness",
+            "adversarial_eval_coverage_readiness",
             "incident_readiness_artifacts",
+            "deployment_architecture_evidence",
             "drift_detection_readiness",
         }
         residual_checks = {
@@ -179,6 +223,7 @@ class SecurityLaunchGate:
             "telemetry_evidence",
             "replay_evidence",
             "fallback_readiness",
+            "production_deployment_attestation",
         }
 
         blockers = [self._render_issue(check) for check in checks if check.check_name in blocker_checks and not check.passed]
@@ -191,8 +236,30 @@ class SecurityLaunchGate:
         else:
             status = GO_STATUS
 
+        framework_check_names = {
+            "mandatory_controls",
+            "policy_artifact",
+            "retrieval_boundary_config",
+            "tool_router_enforcement_evidence",
+            "eval_suite_evidence",
+            "kill_switch_readiness",
+        }
+        production_example_check_names = {
+            "iam_integration_readiness",
+            "secrets_manager_readiness",
+            "high_risk_tool_isolation_readiness",
+            "adversarial_eval_coverage_readiness",
+            "deployment_architecture_evidence",
+            "infrastructure_boundary_evidence",
+        }
+        framework_complete = all(check.passed for check in checks if check.check_name in framework_check_names)
+        production_example_ready = all(check.passed for check in checks if check.check_name in production_example_check_names)
+        production_deployment_ready = by_name["production_deployment_attestation"].passed
+
         summary = (
             f"status={status}; checks_passed={sum(1 for c in checks if c.passed)}/{len(checks)}; "
+            f"framework_complete={framework_complete}; production_example_ready={production_example_ready}; "
+            f"production_deployment_ready={production_deployment_ready}; "
             f"scorecard={', '.join(f'{item.category_name}:{item.status}' for item in scorecard)}; "
             f"blockers={len(blockers)}; residual_risks={len(residual_risks)}"
         )
@@ -328,6 +395,230 @@ class SecurityLaunchGate:
             },
         )
 
+    def _check_infrastructure_boundary_evidence(self) -> GateCheckResult:
+        boundary_path = self.repo_root / self.config.infrastructure_boundaries_path
+        inventory_path = self.repo_root / self.config.integration_inventory_path
+
+        if not boundary_path.is_file():
+            return GateCheckResult(
+                check_name="infrastructure_boundary_evidence",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="infrastructure boundary definition missing",
+                evidence={"boundary_path": str(boundary_path)},
+            )
+
+        payload = _read_json_file(boundary_path)
+        if not isinstance(payload, dict):
+            return GateCheckResult(
+                check_name="infrastructure_boundary_evidence",
+                status=FAIL_CHECK_STATUS,
+                passed=False,
+                details="infrastructure boundary definition unreadable",
+                evidence={"boundary_path": str(boundary_path)},
+            )
+
+        allowed_destinations = payload.get("allowed_destinations", [])
+        forbidden = payload.get("forbidden_host_patterns", [])
+        access_rules = payload.get("component_access_rules", {})
+        sandbox_allowlist = payload.get("sandbox_allowlist", [])
+
+        if not isinstance(allowed_destinations, list) or not isinstance(forbidden, list) or not isinstance(access_rules, dict) or not isinstance(sandbox_allowlist, list):
+            return GateCheckResult(
+                check_name="infrastructure_boundary_evidence",
+                status=FAIL_CHECK_STATUS,
+                passed=False,
+                details="infrastructure boundary shape invalid",
+                evidence={"boundary_path": str(boundary_path)},
+            )
+
+        allowed_ids = {str(item.get("destination_id", "")) for item in allowed_destinations if isinstance(item, dict) and str(item.get("destination_id", ""))}
+        inventory = _read_json_file(inventory_path)
+        inventory_ids: set[str] = set()
+        if isinstance(inventory, dict):
+            for item in inventory.get("integrations", []):
+                if isinstance(item, dict):
+                    ident = str(item.get("integration_id", ""))
+                    if ident:
+                        inventory_ids.add(ident)
+
+        mapped_required = {
+            "model_provider.default",
+            "retrieval_backend.default",
+            "storage_output.audit_jsonl",
+            "tool_endpoint.ticket_lookup",
+            "webhook.outbound_support",
+        }
+        missing_required = sorted(item for item in mapped_required if item not in allowed_ids)
+        inventory_not_mapped = sorted(item for item in inventory_ids if item not in allowed_ids and not item.startswith("mcp_server."))
+
+        required_rule_sources = {"app_runtime", "mcp_gateway", "high_risk_tool_sandbox"}
+        missing_rule_sources = sorted(source for source in required_rule_sources if source not in access_rules)
+
+        passed = len(allowed_ids) >= 5 and len(forbidden) >= 2 and len(sandbox_allowlist) >= 1 and not missing_required and not missing_rule_sources and not inventory_not_mapped
+
+        return GateCheckResult(
+            check_name="infrastructure_boundary_evidence",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details=("infrastructure boundary controls complete" if passed else "infrastructure boundary controls incomplete"),
+            evidence={
+                "boundary_path": str(boundary_path),
+                "inventory_path": str(inventory_path),
+                "allowed_destination_count": len(allowed_ids),
+                "forbidden_pattern_count": len(forbidden),
+                "sandbox_allowlist_count": len(sandbox_allowlist),
+                "missing_required_destinations": missing_required,
+                "missing_rule_sources": missing_rule_sources,
+                "inventory_not_mapped": inventory_not_mapped,
+            },
+        )
+
+
+    def _check_iam_integration_readiness(self) -> GateCheckResult:
+        module_path = self.repo_root / self.config.iam_module_path
+        doc_path = self.repo_root / self.config.iam_doc_path
+        test_path = self.repo_root / self.config.iam_test_path
+        scenario_path = self.repo_root / self.config.scenario_file_path
+
+        missing = [str(path) for path in (module_path, doc_path, test_path, scenario_path) if not path.is_file()]
+        if missing:
+            return GateCheckResult(
+                check_name="iam_integration_readiness",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="iam integration artifacts missing",
+                evidence={"missing": missing, "module_path": str(module_path), "doc_path": str(doc_path), "test_path": str(test_path)},
+            )
+
+        scenario_payload = _read_json_file(scenario_path)
+        scenarios = scenario_payload.get("scenarios", []) if isinstance(scenario_payload, dict) else []
+        scenario_ids = {str(item.get("id", "")) for item in scenarios if isinstance(item, dict)}
+        required_ids = {"adversarial_forged_actor_identity", "adversarial_delegation_scope_escalation"}
+        missing_ids = sorted(required_ids - scenario_ids)
+
+        passed = len(missing_ids) == 0
+        return GateCheckResult(
+            check_name="iam_integration_readiness",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details="iam integration evidence complete" if passed else "iam integration eval coverage missing",
+            evidence={"module_path": str(module_path), "doc_path": str(doc_path), "test_path": str(test_path), "scenario_path": str(scenario_path), "missing_scenario_ids": missing_ids},
+        )
+
+    def _check_secrets_manager_readiness(self) -> GateCheckResult:
+        module_path = self.repo_root / self.config.secrets_module_path
+        doc_path = self.repo_root / self.config.secrets_doc_path
+        settings_path = self.repo_root / self.config.settings_template_path
+        startup_path = self.repo_root / self.config.startup_path
+
+        missing = [str(path) for path in (module_path, doc_path, settings_path, startup_path) if not path.is_file()]
+        if missing:
+            return GateCheckResult(
+                check_name="secrets_manager_readiness",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="secrets-manager readiness artifacts missing",
+                evidence={"missing": missing},
+            )
+
+        module_text = module_path.read_text()
+        doc_text = doc_path.read_text()
+        settings_text = settings_path.read_text()
+        startup_text = startup_path.read_text()
+
+        checks = {
+            "provider_abstraction": "class SecretProvider" in module_text,
+            "managed_ref_patterns": ("vault:" in settings_text and "sm:" in settings_text),
+            "provider_policy": "provider_policy:" in settings_text,
+            "safe_startup_error": "safe_error_message" in startup_text,
+            "doc_local_vs_prod": ("Local development" in doc_text and "Deployment integration guidance" in doc_text),
+        }
+        failed = sorted(name for name, ok in checks.items() if not ok)
+        passed = len(failed) == 0
+        return GateCheckResult(
+            check_name="secrets_manager_readiness",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details="secrets-manager readiness complete" if passed else "secrets-manager readiness incomplete",
+            evidence={"checks": checks, "failed_checks": failed, "module_path": str(module_path), "settings_path": str(settings_path), "doc_path": str(doc_path)},
+        )
+
+    def _check_adversarial_eval_coverage_readiness(self) -> GateCheckResult:
+        scenario_path = self.repo_root / self.config.scenario_file_path
+        bundle = self._load_latest_eval_evidence_bundle()
+        if not scenario_path.is_file() or bundle is None:
+            return GateCheckResult(
+                check_name="adversarial_eval_coverage_readiness",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="adversarial eval coverage evidence missing",
+                evidence={"scenario_path": str(scenario_path), "bundle_found": bundle is not None},
+            )
+
+        scenario_payload = _read_json_file(scenario_path)
+        scenarios = scenario_payload.get("scenarios", []) if isinstance(scenario_payload, dict) else []
+        scenario_ids = {str(item.get("id", "")) for item in scenarios if isinstance(item, dict)}
+
+        required = dict(self.config.required_adversarial_scenario_outcomes)
+        missing_scenarios = sorted(item for item in required if item not in scenario_ids)
+        by_id = {str(item.get("scenario_id", "")): str(item.get("outcome", "")) for item in bundle.jsonl_records if isinstance(item, dict)}
+        outcome_failures = {
+            scenario_id: {"expected": expected, "actual": by_id.get(scenario_id, "missing")}
+            for scenario_id, expected in required.items()
+            if by_id.get(scenario_id, "missing") != expected
+        }
+        passed = len(missing_scenarios) == 0 and len(outcome_failures) == 0
+        return GateCheckResult(
+            check_name="adversarial_eval_coverage_readiness",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details="adversarial eval coverage complete" if passed else "adversarial eval coverage incomplete",
+            evidence={
+                "scenario_path": str(scenario_path),
+                "summary_path": bundle.summary_path,
+                "eval_jsonl_path": bundle.jsonl_path,
+                "required_outcomes": required,
+                "missing_scenarios": missing_scenarios,
+                "outcome_failures": outcome_failures,
+            },
+        )
+
+    def _check_production_deployment_attestation(self) -> GateCheckResult:
+        attestation_path = self.repo_root / self.config.production_attestation_path
+        if not attestation_path.is_file():
+            return GateCheckResult(
+                check_name="production_deployment_attestation",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="production deployment attestation missing",
+                evidence={"attestation_path": str(attestation_path)},
+            )
+
+        text = attestation_path.read_text()
+        normalized = text.lower()
+        required_sections = {
+            "verified_controls": "## verified_controls" in normalized,
+            "residual_risks": "## residual_risks" in normalized,
+            "deferred_true_production_operations": "## deferred_true_production_operations" in normalized,
+        }
+        missing_sections = sorted(name for name, present in required_sections.items() if not present)
+        checklist_count = normalized.count("- [x]")
+        passed = len(missing_sections) == 0 and checklist_count >= 1
+        return GateCheckResult(
+            check_name="production_deployment_attestation",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details="production deployment attestation present" if passed else "production deployment attestation incomplete",
+            evidence={
+                "attestation_path": str(attestation_path),
+                "required_sections": required_sections,
+                "missing_sections": missing_sections,
+                "verified_controls_count": checklist_count,
+            },
+        )
+
+
     def _check_incident_readiness_artifacts(self) -> GateCheckResult:
         playbook_path = self.repo_root / self.config.incident_playbook_path
         evidence_summary_path = self.repo_root / self.config.incident_evidence_summary_path
@@ -374,6 +665,110 @@ class SecurityLaunchGate:
                 "missing_sections": missing_sections,
             },
         )
+
+    def _check_deployment_architecture_evidence(self) -> GateCheckResult:
+        profiles_path = self.repo_root / self.config.deployment_profiles_path
+        topology_path = self.repo_root / self.config.deployment_topology_path
+        dependency_path = self.repo_root / self.config.deployment_dependency_inventory_path
+        doc_path = self.repo_root / self.config.deployment_profile_doc_path
+
+        missing = [
+            str(path)
+            for path in (profiles_path, topology_path, dependency_path, doc_path)
+            if not path.is_file()
+        ]
+        if missing:
+            return GateCheckResult(
+                check_name="deployment_architecture_evidence",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="deployment architecture artifacts missing",
+                evidence={
+                    "missing": missing,
+                    "profiles_path": str(profiles_path),
+                    "topology_path": str(topology_path),
+                    "dependency_path": str(dependency_path),
+                    "doc_path": str(doc_path),
+                },
+            )
+
+        profiles_payload = _read_json_file(profiles_path)
+        topology_payload = _read_json_file(topology_path)
+        dependency_payload = _read_json_file(dependency_path)
+        if not isinstance(profiles_payload, dict) or not isinstance(topology_payload, dict) or not isinstance(dependency_payload, dict):
+            return GateCheckResult(
+                check_name="deployment_architecture_evidence",
+                status=FAIL_CHECK_STATUS,
+                passed=False,
+                details="deployment architecture artifacts unreadable",
+                evidence={
+                    "profiles_path": str(profiles_path),
+                    "topology_path": str(topology_path),
+                    "dependency_path": str(dependency_path),
+                },
+            )
+
+        profiles = profiles_payload.get("profiles", [])
+        deps = dependency_payload.get("dependencies", [])
+        services = topology_payload.get("topology", {}).get("services", []) if isinstance(topology_payload.get("topology"), dict) else []
+
+        required_envs = {"local", "staging", "production"}
+        required_boundaries = {
+            "app_runtime",
+            "policy_bundle_delivery",
+            "retrieval_backend",
+            "telemetry_sink",
+            "audit_replay_storage",
+            "high_risk_tool_sandbox",
+            "secret_source",
+            "iam_provider",
+        }
+
+        found_envs = set()
+        boundary_gaps: dict[str, list[str]] = {}
+        for profile in profiles if isinstance(profiles, list) else []:
+            if not isinstance(profile, dict):
+                continue
+            name = str(profile.get("name", ""))
+            if not name:
+                continue
+            found_envs.add(name)
+            boundaries = profile.get("trust_boundaries", {})
+            if not isinstance(boundaries, dict):
+                boundary_gaps[name] = sorted(required_boundaries)
+                continue
+            missing_for_env = sorted(boundary for boundary in required_boundaries if not isinstance(boundaries.get(boundary), str) or not str(boundaries.get(boundary)).strip())
+            if missing_for_env:
+                boundary_gaps[name] = missing_for_env
+
+        missing_envs = sorted(required_envs - found_envs)
+        dep_count = len(deps) if isinstance(deps, list) else 0
+        service_count = len(services) if isinstance(services, list) else 0
+        passed = not missing_envs and not boundary_gaps and dep_count >= 5 and service_count >= 6
+
+        return GateCheckResult(
+            check_name="deployment_architecture_evidence",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details=(
+                "deployment architecture evidence complete"
+                if passed
+                else "deployment architecture evidence incomplete"
+            ),
+            evidence={
+                "profiles_path": str(profiles_path),
+                "topology_path": str(topology_path),
+                "dependency_path": str(dependency_path),
+                "doc_path": str(doc_path),
+                "required_envs": sorted(required_envs),
+                "found_envs": sorted(found_envs),
+                "missing_envs": missing_envs,
+                "boundary_gaps": boundary_gaps,
+                "dependency_count": dep_count,
+                "service_count": service_count,
+            },
+        )
+
 
     def _check_drift_detection_readiness(self) -> GateCheckResult:
         report = run_security_drift_checks(
@@ -1081,19 +1476,58 @@ class SecurityLaunchGate:
 
         router_path = self.repo_root / "tools/router.py"
         router_text = router_path.read_text() if router_path.is_file() else ""
-        has_isolation_enforcement = ("high-risk tool missing isolation metadata" in router_text and "high_risk_approved" in router_text)
+        has_isolation_enforcement = (
+            "high-risk tool missing isolation metadata" in router_text
+            and "high-risk tool sandbox profile unsupported" in router_text
+            and "self.high_risk_sandbox.execute" in router_text
+        )
 
-        passed = has_isolation_enforcement
+        sandbox_module_path = self.repo_root / "tools/sandbox.py"
+        sandbox_module_present = sandbox_module_path.is_file()
+
+        evidence_paths = sorted(self.repo_root.glob("artifacts/logs/sandbox/*.json"))
+        sandbox_evidence_count = 0
+        evidence_statuses: list[str] = []
+        approved_seen = set()
+        for evidence_path in evidence_paths:
+            parsed = _read_json_file(evidence_path)
+            if not isinstance(parsed, dict):
+                continue
+            tool_name = str(parsed.get("tool_name", ""))
+            if tool_name not in approved:
+                continue
+            if str(parsed.get("profile_name", "")) == "" or str(parsed.get("boundary_name", "")) == "":
+                continue
+            status = str(parsed.get("status", ""))
+            if status not in {"ok", "timeout", "error"}:
+                continue
+            sandbox_evidence_count += 1
+            approved_seen.add(tool_name)
+            evidence_statuses.append(status)
+
+        passed = has_isolation_enforcement and sandbox_module_present and sandbox_evidence_count > 0 and all(
+            tool in approved_seen for tool in approved
+        )
         return GateCheckResult(
             check_name="high_risk_tool_isolation_readiness",
             status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
             passed=passed,
-            details=("high-risk isolation controls enforced" if passed else "high-risk tools approved but isolation enforcement evidence missing"),
+            details=(
+                "high-risk isolation controls and sandbox evidence present"
+                if passed
+                else "high-risk tools approved but sandbox controls/evidence incomplete"
+            ),
             evidence={
                 "policy_path": str(policy_path),
                 "high_risk_approved_tools": list(approved),
                 "router_path": str(router_path),
+                "sandbox_module_path": str(sandbox_module_path),
                 "isolation_enforcement_detected": has_isolation_enforcement,
+                "sandbox_module_present": sandbox_module_present,
+                "sandbox_evidence_count": sandbox_evidence_count,
+                "sandbox_evidence_statuses": evidence_statuses,
+                "sandbox_evidence_paths": [str(path) for path in evidence_paths],
+                "approved_tools_with_evidence": sorted(approved_seen),
             },
         )
 
