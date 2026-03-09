@@ -1,0 +1,127 @@
+{
+  "integrations": [
+    {
+      "integration_id": "model_provider.default",
+      "category": "model_provider",
+      "trust_class": "restricted",
+      "allowed_data_classes": [
+        "public",
+        "internal_support",
+        "metadata"
+      ],
+      "tenant_scope": "tenant",
+      "auth_method": "api_key_ref",
+      "logging_constraints": [
+        "no_raw_prompt_secrets",
+        "response_summary_only"
+      ],
+      "failure_mode": "deny_closed",
+      "max_payload_bytes": 16384,
+      "strip_fields": [
+        "api_key",
+        "authorization"
+      ],
+      "required_payload_fields": [
+        "request_id",
+        "tenant_id"
+      ]
+    },
+    {
+      "integration_id": "retrieval_backend.default",
+      "category": "retrieval_backend",
+      "trust_class": "restricted",
+      "allowed_data_classes": [
+        "internal_support",
+        "metadata"
+      ],
+      "tenant_scope": "tenant",
+      "auth_method": "service_identity",
+      "logging_constraints": [
+        "query_redacted"
+      ],
+      "failure_mode": "deny_closed",
+      "max_payload_bytes": 8192,
+      "strip_fields": [
+        "query_text"
+      ],
+      "required_payload_fields": [
+        "request_id",
+        "tenant_id"
+      ]
+    },
+    {
+      "integration_id": "tool_endpoint.ticket_lookup",
+      "category": "tool_endpoint",
+      "trust_class": "restricted",
+      "allowed_data_classes": [
+        "internal_support",
+        "metadata"
+      ],
+      "tenant_scope": "tenant",
+      "auth_method": "capability_token",
+      "logging_constraints": [
+        "arguments_redacted"
+      ],
+      "failure_mode": "deny_closed"
+    },
+    {
+      "integration_id": "tool_endpoint.account_update",
+      "category": "tool_endpoint",
+      "trust_class": "restricted",
+      "allowed_data_classes": [
+        "internal_support",
+        "metadata"
+      ],
+      "tenant_scope": "tenant",
+      "auth_method": "capability_token",
+      "logging_constraints": [
+        "arguments_redacted"
+      ],
+      "failure_mode": "deny_closed"
+    },
+    {
+      "integration_id": "mcp_server.support_mcp",
+      "category": "mcp_server",
+      "trust_class": "untrusted",
+      "allowed_data_classes": [
+        "metadata"
+      ],
+      "tenant_scope": "tenant",
+      "auth_method": "mcp_transport",
+      "logging_constraints": [
+        "origin_required",
+        "protocol_errors_logged"
+      ],
+      "failure_mode": "deny_closed"
+    },
+    {
+      "integration_id": "storage_output.audit_jsonl",
+      "category": "storage_output",
+      "trust_class": "trusted",
+      "allowed_data_classes": [
+        "metadata"
+      ],
+      "tenant_scope": "global",
+      "auth_method": "filesystem",
+      "logging_constraints": [
+        "redacted_payload"
+      ],
+      "failure_mode": "deny_closed"
+    },
+    {
+      "integration_id": "webhook.outbound_support",
+      "category": "webhook",
+      "trust_class": "restricted",
+      "allowed_data_classes": [
+        "metadata"
+      ],
+      "tenant_scope": "tenant",
+      "auth_method": "webhook_secret_ref",
+      "logging_constraints": [
+        "payload_redacted",
+        "signature_required"
+      ],
+      "failure_mode": "deny_closed"
+    }
+  ]
+}

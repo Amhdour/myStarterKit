@@ -178,3 +178,33 @@ This document describes trust boundaries that **exist in the current codebase** 
 - Are retrieval decisions tenant/source/trust/provenance constrained and fail-closed?
 - Are deny/fallback/error decisions visible in audit logs?
 - Are launch decisions traceable to real artifacts (not inferred state)?
+
+## Identity and Trust Boundaries Added
+
+1. **Inbound actor assertion boundary**: request/session creation must provide a valid structured actor identity.
+2. **Policy subject boundary**: policy engine evaluates only against explicit `ActorIdentity` + action context.
+3. **Retrieval boundary**: retrieval queries carry identity and are denied on malformed identity or tenant mismatch.
+4. **Tool mediation boundary**: tool invocations include identity and are denied on invalid identity/capability mismatch.
+5. **Audit boundary**: every emitted audit event stores full actor identity and delegation chain.
+
+## Delegation trust-boundary controls
+
+- Delegated and tool-executor actors must provide a complete delegation grant chain.
+- Every hop must be parent->child continuous and scoped to the same tenant.
+- Capability scope can only narrow across hops; expansion is denied as scope inflation.
+- Expired grants are denied before policy or execution proceeds.
+
+## MCP integration boundary controls
+
+- Unknown servers are denied unless explicitly allowlisted in `MCPServerProfile`.
+- Untrusted servers are denied by default; restricted/trusted profiles are explicitly scoped.
+- Tenant mismatch between actor identity and MCP server profile is denied.
+- Response schema and payload-size violations are denied and logged.
+- Protocol retries are bounded and fail closed into deny/error events.
+
+## High-risk tool boundary controls
+
+- Tools are risk-classified and high-risk tools do not run under low-risk assumptions.
+- High-risk tools require isolation metadata (`isolation_profile`, `isolation_boundary`).
+- High-risk execution requires explicit policy approval (`high_risk_approved`).
+- High-risk invocations are confirmation-gated and tightly rate-limited.

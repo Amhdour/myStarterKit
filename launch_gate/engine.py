@@ -19,6 +19,7 @@ from launch_gate.contracts import (
     ScorecardCategory,
 )
 from policies.loader import load_policy
+from verification.drift import run_security_drift_checks
 from verification.runner import run_security_guarantees_verification
 
 
@@ -89,6 +90,20 @@ class LaunchGateConfig:
             "telemetry_supports_replay",
         )
     )
+    integration_inventory_path: str = "config/integration_inventory.json"
+    required_integration_categories: Sequence[str] = field(
+        default_factory=lambda: (
+            "model_provider",
+            "retrieval_backend",
+            "tool_endpoint",
+            "mcp_server",
+            "storage_output",
+            "webhook",
+        )
+    )
+    incident_playbook_path: str = "docs/incident_response_playbooks.md"
+    incident_evidence_summary_path: str = "docs/evidence_pack/incident_readiness_summary.md"
+    drift_manifest_path: str = "config/security_drift_manifest.json"
 
 
 @dataclass(frozen=True)
@@ -118,6 +133,10 @@ class SecurityLaunchGate:
             self._check_replay_evidence(),
             self._check_eval_suite_evidence(),
             self._check_fallback_readiness(),
+            self._check_high_risk_tool_isolation_readiness(),
+            self._check_integration_inventory_completeness(),
+            self._check_incident_readiness_artifacts(),
+            self._check_drift_detection_readiness(),
         ]
 
         by_name = {check.check_name: check for check in checks}
@@ -135,6 +154,10 @@ class SecurityLaunchGate:
             self._build_scorecard_category("eval_suite_evidence", ("eval_suite_evidence",), by_name),
             self._build_scorecard_category("fallback_readiness", ("fallback_readiness",), by_name),
             self._build_scorecard_category("kill_switch_readiness", ("kill_switch_readiness",), by_name),
+            self._build_scorecard_category("high_risk_tool_isolation", ("high_risk_tool_isolation_readiness",), by_name),
+            self._build_scorecard_category("integration_inventory", ("integration_inventory_completeness",), by_name),
+            self._build_scorecard_category("incident_readiness", ("incident_readiness_artifacts",), by_name),
+            self._build_scorecard_category("drift_detection", ("drift_detection_readiness",), by_name),
         )
 
         blocker_checks = {
@@ -146,6 +169,10 @@ class SecurityLaunchGate:
             "tool_router_enforcement_evidence",
             "kill_switch_readiness",
             "eval_suite_evidence",
+            "high_risk_tool_isolation_readiness",
+            "integration_inventory_completeness",
+            "incident_readiness_artifacts",
+            "drift_detection_readiness",
         }
         residual_checks = {
             "guarantees_manifest_evidence",
@@ -221,6 +248,168 @@ class SecurityLaunchGate:
             passed=passed,
             details=details,
             evidence={"required": list(self.config.mandatory_control_files), "missing": missing},
+        )
+
+    def _check_integration_inventory_completeness(self) -> GateCheckResult:
+        inventory_path = self.repo_root / self.config.integration_inventory_path
+        if not inventory_path.is_file():
+            return GateCheckResult(
+                check_name="integration_inventory_completeness",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="integration inventory missing",
+                evidence={"inventory_path": str(inventory_path), "inventory_exists": False},
+            )
+        payload = _read_json_file(inventory_path)
+        if payload is None:
+            return GateCheckResult(
+                check_name="integration_inventory_completeness",
+                status=FAIL_CHECK_STATUS,
+                passed=False,
+                details="integration inventory unreadable",
+                evidence={"inventory_path": str(inventory_path), "inventory_exists": True},
+            )
+        integrations = payload.get("integrations")
+        if not isinstance(integrations, list) or len(integrations) == 0:
+            return GateCheckResult(
+                check_name="integration_inventory_completeness",
+                status=FAIL_CHECK_STATUS,
+                passed=False,
+                details="integration inventory invalid: integrations must be non-empty list",
+                evidence={"inventory_path": str(inventory_path), "inventory_exists": True},
+            )
+        required_fields = {
+            "integration_id",
+            "category",
+            "trust_class",
+            "allowed_data_classes",
+            "tenant_scope",
+            "auth_method",
+            "logging_constraints",
+            "failure_mode",
+        }
+        missing_records: list[str] = []
+        categories: set[str] = set()
+        ids: set[str] = set()
+        duplicates: set[str] = set()
+        for idx, item in enumerate(integrations):
+            if not isinstance(item, dict):
+                missing_records.append(f"[{idx}]:not-object")
+                continue
+            integration_id = str(item.get("integration_id", "")).strip()
+            if integration_id in ids:
+                duplicates.add(integration_id)
+            ids.add(integration_id)
+            category = str(item.get("category", "")).strip()
+            if category:
+                categories.add(category)
+            missing = sorted(field for field in required_fields if field not in item)
+            if missing:
+                missing_records.append(f"{integration_id or idx}:{','.join(missing)}")
+        missing_categories = sorted(category for category in self.config.required_integration_categories if category not in categories)
+        passed = len(missing_records) == 0 and len(duplicates) == 0 and len(missing_categories) == 0
+        details = "integration inventory complete"
+        if not passed:
+            details = (
+                f"inventory gaps: missing_fields={len(missing_records)}; "
+                f"duplicate_ids={len(duplicates)}; missing_categories={','.join(missing_categories) or 'none'}"
+            )
+        return GateCheckResult(
+            check_name="integration_inventory_completeness",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details=details,
+            evidence={
+                "inventory_path": str(inventory_path),
+                "integration_count": len(integrations),
+                "missing_records": missing_records,
+                "duplicate_ids": sorted(duplicates),
+                "missing_categories": missing_categories,
+            },
+        )
+
+    def _check_incident_readiness_artifacts(self) -> GateCheckResult:
+        playbook_path = self.repo_root / self.config.incident_playbook_path
+        evidence_summary_path = self.repo_root / self.config.incident_evidence_summary_path
+        missing: list[str] = []
+        if not playbook_path.is_file():
+            missing.append(str(playbook_path))
+        if not evidence_summary_path.is_file():
+            missing.append(str(evidence_summary_path))
+
+        if missing:
+            return GateCheckResult(
+                check_name="incident_readiness_artifacts",
+                status=MISSING_CHECK_STATUS,
+                passed=False,
+                details="incident readiness artifacts missing",
+                evidence={
+                    "playbook_path": str(playbook_path),
+                    "incident_evidence_summary_path": str(evidence_summary_path),
+                    "missing": missing,
+                },
+            )
+
+        playbook_text = playbook_path.read_text(encoding="utf-8")
+        required_sections = (
+            "policy bypass attempt",
+            "retrieval boundary violation",
+            "suspicious tool execution",
+            "identity mismatch",
+            "delegation abuse",
+            "MCP endpoint anomaly",
+            "secret leakage indicator",
+        )
+        missing_sections = [section for section in required_sections if section not in playbook_text]
+        passed = len(missing_sections) == 0
+        details = "incident readiness artifacts complete" if passed else "incident playbook missing required incident classes"
+        return GateCheckResult(
+            check_name="incident_readiness_artifacts",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details=details,
+            evidence={
+                "playbook_path": str(playbook_path),
+                "incident_evidence_summary_path": str(evidence_summary_path),
+                "missing_sections": missing_sections,
+            },
+        )
+
+    def _check_drift_detection_readiness(self) -> GateCheckResult:
+        report = run_security_drift_checks(
+            self.repo_root,
+            drift_manifest_path=self.config.drift_manifest_path,
+            policy_path=self.config.policy_path,
+            integration_inventory_path=self.config.integration_inventory_path,
+        )
+        critical_failures = [
+            item
+            for item in report.get("results", [])
+            if isinstance(item, dict) and item.get("severity") == "critical" and item.get("status") != "pass"
+        ]
+        warning_failures = [
+            item
+            for item in report.get("results", [])
+            if isinstance(item, dict) and item.get("severity") == "warning" and item.get("status") != "pass"
+        ]
+        passed = len(critical_failures) == 0
+        details = (
+            "security drift checks passed"
+            if passed
+            else f"critical security drift detected: {len(critical_failures)} critical failures"
+        )
+        return GateCheckResult(
+            check_name="drift_detection_readiness",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details=details,
+            evidence={
+                "drift_manifest_path": self.config.drift_manifest_path,
+                "critical_failure_count": len(critical_failures),
+                "warning_failure_count": len(warning_failures),
+                "critical_failures": critical_failures,
+                "warning_failures": warning_failures,
+            },
         )
 
     def _check_guarantees_manifest_contract(self) -> GateCheckResult:
@@ -872,6 +1061,39 @@ class SecurityLaunchGate:
                 "eval_jsonl_path": bundle.jsonl_path,
                 "required_fallback_scenario": self.config.required_fallback_scenario_id,
                 "fallback_scenario_outcome": fallback_outcome,
+            },
+        )
+
+
+    def _check_high_risk_tool_isolation_readiness(self) -> GateCheckResult:
+        policy_path = self.repo_root / self.config.policy_path
+        runtime_policy = load_policy(policy_path, environment="production")
+
+        approved = tuple(runtime_policy.tools.high_risk_approved_tools)
+        if len(approved) == 0:
+            return GateCheckResult(
+                check_name="high_risk_tool_isolation_readiness",
+                status=PASS_CHECK_STATUS,
+                passed=True,
+                details="no high-risk tools approved by policy",
+                evidence={"high_risk_approved_tools": []},
+            )
+
+        router_path = self.repo_root / "tools/router.py"
+        router_text = router_path.read_text() if router_path.is_file() else ""
+        has_isolation_enforcement = ("high-risk tool missing isolation metadata" in router_text and "high_risk_approved" in router_text)
+
+        passed = has_isolation_enforcement
+        return GateCheckResult(
+            check_name="high_risk_tool_isolation_readiness",
+            status=PASS_CHECK_STATUS if passed else FAIL_CHECK_STATUS,
+            passed=passed,
+            details=("high-risk isolation controls enforced" if passed else "high-risk tools approved but isolation enforcement evidence missing"),
+            evidence={
+                "policy_path": str(policy_path),
+                "high_risk_approved_tools": list(approved),
+                "router_path": str(router_path),
+                "isolation_enforcement_detected": has_isolation_enforcement,
             },
         )
 

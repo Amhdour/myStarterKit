@@ -1,0 +1,50 @@
+{
+  "engagement_id": "retrofit-<client>-<date>",
+  "system_name": "",
+  "environment": "prod|staging|dev",
+  "entrypoints": [
+    {
+      "name": "",
+      "type": "api|worker|batch",
+      "authn_boundary": "",
+      "tenant_context_source": ""
+    }
+  ],
+  "model_providers": [
+    {
+      "integration_id": "",
+      "provider": "",
+      "auth_method": "",
+      "data_classes_sent": []
+    }
+  ],
+  "retrieval_backends": [
+    {
+      "integration_id": "",
+      "tenant_scoped": true,
+      "source_registry_present": false,
+      "source_ids": []
+    }
+  ],
+  "tool_surfaces": [
+    {
+      "tool_id": "",
+      "execution_path": "router|direct|mixed",
+      "sensitive": false,
+      "high_risk": false
+    }
+  ],
+  "external_integrations": [
+    {
+      "integration_id": "",
+      "category": "model_provider|retrieval_backend|tool_endpoint|mcp_server|webhook|storage_output",
+      "documented": false
+    }
+  ],
+  "telemetry_outputs": {
+    "audit_jsonl": "",
+    "replay_artifacts": "",
+    "redaction_present": false
+  },
+  "known_gaps": []
+}

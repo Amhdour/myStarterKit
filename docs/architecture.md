@@ -93,3 +93,46 @@ It maps each implemented boundary to: (1) crossing data, (2) failure modes, (3) 
 - Policy engine now denies retrieval when tenant source allowlists are empty and denies tool routing when no tools are allowlisted.
 - Launch gate now handles unreadable eval summary artifacts safely as blocking evidence failures.
 - Config template launch-gate checks were aligned to implemented check names.
+
+## Canonical Actor Identity Model
+
+The runtime now uses a single structured `ActorIdentity` object across orchestration, policy checks, retrieval, tool routing/execution, and audit emission. Required attributes are:
+
+- `actor_id`
+- `actor_type` (`end_user`, `assistant_runtime`, `delegated_agent`, `tool_executor`, `human_operator`, `test_harness`)
+- `tenant_id`
+- `session_id`
+- `delegation_chain`
+- `auth_context`
+- `trust_level`
+- `allowed_capabilities`
+
+All sensitive decisions fail closed when identity is absent, malformed, or tenant-inconsistent.
+
+## Delegation Enforcement Model
+
+Delegation is now represented as a strict chain of `DelegationGrant` records, each containing:
+- `parent_actor_id`
+- `child_actor_id`
+- `delegated_capabilities`
+- `delegation_reason`
+- `issued_at`
+- `expires_at`
+- `scope_constraints`
+
+Delegated actions are denied by default unless chain continuity, tenant scope, expiration window, and non-escalation checks all pass.
+
+## MCP Hardening Controls
+
+MCP-style tool/resource integrations are mediated by `tools.mcp_security.SecureMCPGateway` with explicit server registration (`MCPServerProfile`), trust labels, capability allowlists, schema checks, timeout/size/retry limits, and protocol error fail-closed behavior.
+
+MCP execution remains behind `SecureToolRouter` and policy mediation (`tools.invoke`), preventing direct protocol pass-through into runtime tool execution.
+
+## Capability-Token Tool Authorization
+
+Sensitive tools are protected by scoped capability tokens validated by `tools.capabilities.CapabilityValidator` before execution.
+Issuance is policy-mediated through `tools.capabilities.CapabilityIssuer` and audited for issuance/use/denial evidence.
+
+## High-Risk Tool Risk & Isolation Controls
+
+Tool definitions now include explicit risk classification (`low`/`moderate`/`high`). High-risk tools require isolation metadata and explicit policy approval, enforce confirmation, and run with tighter rate limits. Missing isolation metadata blocks execution by default.

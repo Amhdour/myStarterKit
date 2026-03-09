@@ -4,37 +4,79 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Mapping, Sequence
 
+from identity.models import ActorIdentity, ActorType, build_identity
 from retrieval.contracts import RetrievalDocument
 from tools.contracts import ToolDecision
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class SessionContext:
     """Session-level metadata carried across requests."""
 
-    session_id: str
-    actor_id: str
-    tenant_id: str
+    identity: ActorIdentity
     channel: str = "support"
     attributes: Mapping[str, str] = field(default_factory=dict)
+
+    def __init__(
+        self,
+        *,
+        identity: ActorIdentity | None = None,
+        session_id: str | None = None,
+        actor_id: str | None = None,
+        tenant_id: str | None = None,
+        channel: str = "support",
+        attributes: Mapping[str, str] | None = None,
+    ) -> None:
+        if identity is None:
+            if not session_id or not actor_id or not tenant_id:
+                raise ValueError("identity is required")
+            identity = build_identity(
+                actor_id=actor_id,
+                actor_type=ActorType.END_USER,
+                tenant_id=tenant_id,
+                session_id=session_id,
+                trust_level="low",
+                allowed_capabilities=("retrieval.search", "model.generate", "tools.route", "tools.invoke"),
+            )
+        object.__setattr__(self, "identity", identity)
+        object.__setattr__(self, "channel", channel)
+        object.__setattr__(self, "attributes", attributes or {})
+
+    @property
+    def session_id(self) -> str:
+        return self.identity.session_id
+
+    @property
+    def actor_id(self) -> str:
+        return self.identity.actor_id
+
+    @property
+    def tenant_id(self) -> str:
+        return self.identity.tenant_id
 
 
 @dataclass(frozen=True)
 class RequestContext:
-    """Request-scoped metadata derived from session + inbound request."""
-
     trace_id: str
     request_id: str
-    session_id: str
-    actor_id: str
-    tenant_id: str
+    identity: ActorIdentity
     received_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @property
+    def session_id(self) -> str:
+        return self.identity.session_id
+
+    @property
+    def actor_id(self) -> str:
+        return self.identity.actor_id
+
+    @property
+    def tenant_id(self) -> str:
+        return self.identity.tenant_id
 
 
 @dataclass(frozen=True)
 class SupportAgentRequest:
-    """Normalized inbound request payload for orchestration."""
-
     request_id: str
     user_text: str
     session: SessionContext
@@ -42,8 +84,6 @@ class SupportAgentRequest:
 
 @dataclass(frozen=True)
 class OrchestrationTrace:
-    """Trace information for observability and downstream debugging."""
-
     policy_checks: Sequence[str]
     retrieved_document_ids: Sequence[str]
     tool_decisions: Sequence[str]
@@ -51,8 +91,6 @@ class OrchestrationTrace:
 
 @dataclass(frozen=True)
 class SupportAgentResponse:
-    """Structured response payload emitted by orchestrator."""
-
     request_id: str
     session_id: str
     answer_text: str
@@ -60,10 +98,4 @@ class SupportAgentResponse:
     context: RequestContext
     retrieved_documents: Sequence[RetrievalDocument] = field(default_factory=tuple)
     tool_decisions: Sequence[ToolDecision] = field(default_factory=tuple)
-    trace: OrchestrationTrace = field(
-        default_factory=lambda: OrchestrationTrace(
-            policy_checks=tuple(),
-            retrieved_document_ids=tuple(),
-            tool_decisions=tuple(),
-        )
-    )
+    trace: OrchestrationTrace = field(default_factory=lambda: OrchestrationTrace(tuple(), tuple(), tuple()))

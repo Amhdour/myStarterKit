@@ -15,6 +15,8 @@ This folder contains reviewer-ready evidence artifacts for security review, laun
 - `launch_gate_summary.md`
 - `residual_risks.md`
 - `open_issues.md`
+- `incident_readiness_summary.md`
+- `retrofit_evidence_checklist.md`
 
 ## How to Use
 1. Regenerate core machine evidence from a clean state:
@@ -43,3 +45,9 @@ This folder contains reviewer-ready evidence artifacts for security review, laun
 - Do not claim controls that are not implemented.
 - Include command outputs and artifact paths where applicable.
 - Mark assumptions and limitations explicitly in `residual_risks.md` and `open_issues.md`.
+
+## Retrofit Review Mode
+- Retrofit mode guide: `docs/retrofit_mode.md`.
+- System profile template: `docs/templates/retrofit_system_profile.template.json`.
+- Control mapping template: `docs/templates/retrofit_control_mapping.template.json`.
+- Retrofit evidence checklist: `docs/evidence_pack/retrofit_evidence_checklist.md`.

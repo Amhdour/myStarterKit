@@ -165,3 +165,13 @@ python -c "from pathlib import Path; from launch_gate.engine import SecurityLaun
 - Reviewer trust pack (quick credibility walkthrough): `docs/reviewer_guide.md`
 - Portfolio summary: `docs/portfolio/project_summary.md`
 - Evidence pack index: `docs/evidence_pack/README.md`
+
+- Secrets handling guide: `docs/security_secrets.md`
+
+- External integration boundary hardening: `docs/integration_boundary_security.md`.
+
+- Incident response playbooks: `docs/incident_response_playbooks.md`.
+- Incident readiness evidence summary: `docs/evidence_pack/incident_readiness_summary.md`.
+- Security drift detection guide: `docs/drift_detection.md`.
+- Retrofit review mode guide: `docs/retrofit_mode.md`.
+- Retrofit assessment templates: `docs/templates/retrofit_system_profile.template.json`, `docs/templates/retrofit_control_mapping.template.json`.

@@ -14,6 +14,9 @@ from tools.contracts import (
 )
 from tools.rate_limit import InMemoryToolRateLimiter, ToolRateLimiter
 from tools.registry import InMemoryToolRegistry
+from tools.mcp_security import MCPPolicyError, MCPServerProfile, MCPTransport, MCPTrustLabel, SecureMCPGateway
+from tools.capabilities import CapabilityIssuer, CapabilityToken, CapabilityTokenError, CapabilityValidator
+from tools.isolation import IsolationProfile, ToolRiskClass
 from tools.router import SecureToolRouter
 
 __all__ = [
@@ -31,4 +34,15 @@ __all__ = [
     "ToolRateLimiter",
     "ToolRegistry",
     "ToolRouter",
+    "MCPPolicyError",
+    "MCPServerProfile",
+    "MCPTransport",
+    "MCPTrustLabel",
+    "SecureMCPGateway",
+    "CapabilityIssuer",
+    "CapabilityToken",
+    "CapabilityTokenError",
+    "CapabilityValidator",
+    "IsolationProfile",
+    "ToolRiskClass",
 ]

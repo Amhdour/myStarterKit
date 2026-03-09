@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field, replace
 from typing import Sequence
 
+from identity.models import validate_delegation_chain, validate_identity
 from policies.contracts import PolicyDecision, PolicyEngine
 from retrieval.contracts import (
     RetrievalDocument,
@@ -28,6 +29,16 @@ class SecureRetrievalService(Retriever):
     policy_engine: PolicyEngine | None = None
 
     def search(self, query: RetrievalQuery) -> Sequence[RetrievalDocument]:
+        try:
+            validate_identity(query.identity)
+        except Exception:
+            return tuple()
+
+        try:
+            validate_delegation_chain(query.identity, action="retrieval.search")
+        except Exception:
+            return tuple()
+
         if not query.tenant_id or not query.query_text.strip() or query.top_k <= 0:
             return tuple()
 
@@ -131,11 +142,19 @@ class SecureRetrievalService(Retriever):
         if self.policy_engine is None:
             return None
         try:
-            return self.policy_engine.evaluate(
-                request_id=query.request_id,
-                action="retrieval.search",
-                context={"tenant_id": query.tenant_id},
-            )
+            try:
+                return self.policy_engine.evaluate(
+                    request_id=query.request_id,
+                    action="retrieval.search",
+                    identity=query.identity,
+                    context={"tenant_id": query.tenant_id},
+                )
+            except TypeError:
+                return self.policy_engine.evaluate(
+                    request_id=query.request_id,
+                    action="retrieval.search",
+                    context={"tenant_id": query.tenant_id},
+                )
         except Exception:
             return None
 

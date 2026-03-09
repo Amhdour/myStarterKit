@@ -74,5 +74,40 @@
         ]
       }
     }
+  },
+  "integrations": {
+    "allowed_integrations": [
+      "model_provider.default",
+      "retrieval_backend.default",
+      "tool_endpoint.ticket_lookup",
+      "tool_endpoint.account_update",
+      "mcp_server.support_mcp",
+      "storage_output.audit_jsonl",
+      "webhook.outbound_support"
+    ],
+    "tenant_allowed_integrations": {
+      "tenant-a": [
+        "model_provider.default",
+        "retrieval_backend.default",
+        "tool_endpoint.ticket_lookup",
+        "tool_endpoint.account_update",
+        "mcp_server.support_mcp",
+        "storage_output.audit_jsonl",
+        "webhook.outbound_support"
+      ],
+      "tenant-b": [
+        "model_provider.default",
+        "retrieval_backend.default",
+        "tool_endpoint.ticket_lookup",
+        "mcp_server.support_mcp",
+        "storage_output.audit_jsonl",
+        "webhook.outbound_support"
+      ]
+    },
+    "allowed_data_classes": [
+      "public",
+      "internal_support",
+      "metadata"
+    ]
   }
 }

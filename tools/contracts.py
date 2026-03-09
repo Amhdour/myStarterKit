@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Callable, Mapping, Protocol, Sequence
 
+from identity.models import ActorIdentity, ActorType, build_identity
+from tools.isolation import ToolRiskClass
 
 ALLOWED_DECISION = "allow"
 DENY_DECISION = "deny"
@@ -10,13 +12,11 @@ REQUIRE_CONFIRMATION_DECISION = "require_confirmation"
 
 
 class DirectToolExecutionDeniedError(RuntimeError):
-    """Raised when code attempts to execute a tool without router mediation."""
+    pass
 
 
 @dataclass(frozen=True)
 class ToolDescriptor:
-    """Central tool configuration entry used by the registry/router."""
-
     name: str
     description: str
     allowed: bool
@@ -24,25 +24,44 @@ class ToolDescriptor:
     forbidden_actions: Sequence[str] = field(default_factory=tuple)
     forbidden_fields: Sequence[str] = field(default_factory=tuple)
     rate_limit_per_minute: int | None = None
+    sensitive: bool = False
+    risk_class: ToolRiskClass = ToolRiskClass.LOW
+    isolation_profile: str | None = None
+    isolation_boundary: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class ToolInvocation:
-    """One mediated tool call request that must pass through the router."""
-
     request_id: str
     actor_id: str
     tenant_id: str
+    identity: ActorIdentity
     tool_name: str
     action: str
     arguments: Mapping[str, object]
     confirmed: bool = False
+    capability_token: str | None = None
+
+    def __init__(self, *, request_id: str, tool_name: str, action: str, arguments: Mapping[str, object], confirmed: bool = False, capability_token: str | None = None, identity: ActorIdentity | None = None, actor_id: str | None = None, tenant_id: str | None = None, session_id: str = "tool-session") -> None:
+        raw_actor = actor_id if actor_id is not None else (identity.actor_id if identity else "")
+        raw_tenant = tenant_id if tenant_id is not None else (identity.tenant_id if identity else "")
+        if identity is None and raw_actor and raw_tenant:
+            identity = build_identity(actor_id=raw_actor, actor_type=ActorType.ASSISTANT_RUNTIME, tenant_id=raw_tenant, session_id=session_id, trust_level="medium", allowed_capabilities=("tools.invoke",))
+        if identity is None:
+            identity = build_identity(actor_id="invalid-actor", actor_type=ActorType.ASSISTANT_RUNTIME, tenant_id="invalid-tenant", session_id=session_id, trust_level="low", allowed_capabilities=tuple())
+        object.__setattr__(self, "request_id", request_id)
+        object.__setattr__(self, "actor_id", raw_actor)
+        object.__setattr__(self, "tenant_id", raw_tenant)
+        object.__setattr__(self, "identity", identity)
+        object.__setattr__(self, "tool_name", tool_name)
+        object.__setattr__(self, "action", action)
+        object.__setattr__(self, "arguments", arguments)
+        object.__setattr__(self, "confirmed", confirmed)
+        object.__setattr__(self, "capability_token", capability_token)
 
 
 @dataclass(frozen=True)
 class ToolDecision:
-    """Explicit router decision for safe tool mediation."""
-
     status: str
     tool_name: str
     action: str
@@ -54,32 +73,13 @@ ToolExecutor = Callable[[ToolInvocation], Mapping[str, object]]
 
 
 class ToolRegistry(Protocol):
-    def register(self, tool: ToolDescriptor, executor: ToolExecutor | None = None) -> None:
-        """Register or update one tool descriptor and optional executor implementation."""
-        ...
-
-    def get(self, tool_name: str) -> ToolDescriptor | None:
-        """Get one tool descriptor by name."""
-        ...
-
-    def list_allowlisted(self) -> Sequence[ToolDescriptor]:
-        """List tools currently allowlisted for routing."""
-        ...
-
-    def list_registered(self) -> Sequence[ToolDescriptor]:
-        """List all registered tools for policy-mediated selection."""
-        ...
-
-    def bind_execution_secret(self, secret: object) -> None:
-        """Bind an execution secret used to ensure only router-mediated execution."""
-        ...
-
-    def execute(self, invocation: ToolInvocation, execution_secret: object) -> Mapping[str, object]:
-        """Execute a tool only when presented with the router-bound execution secret."""
-        ...
+    def register(self, tool: ToolDescriptor, executor: ToolExecutor | None = None) -> None: ...
+    def get(self, tool_name: str) -> ToolDescriptor | None: ...
+    def list_allowlisted(self) -> Sequence[ToolDescriptor]: ...
+    def list_registered(self) -> Sequence[ToolDescriptor]: ...
+    def bind_execution_secret(self, secret: object) -> None: ...
+    def execute(self, invocation: ToolInvocation, execution_secret: object) -> Mapping[str, object]: ...
 
 
 class ToolRouter(Protocol):
-    def route(self, invocation: ToolInvocation) -> ToolDecision:
-        """Return allow/deny/require_confirmation decision for a tool invocation."""
-        ...
+    def route(self, invocation: ToolInvocation) -> ToolDecision: ...

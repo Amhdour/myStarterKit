@@ -3,11 +3,11 @@
 from dataclasses import dataclass
 from typing import Mapping, Protocol, Sequence
 
+from identity.models import ActorIdentity, ActorType, build_identity
+
 
 @dataclass(frozen=True)
 class SourceRegistration:
-    """Registered retrieval source bound to an explicit tenant boundary."""
-
     source_id: str
     tenant_id: str
     display_name: str
@@ -17,8 +17,6 @@ class SourceRegistration:
 
 @dataclass(frozen=True)
 class SourceTrustMetadata:
-    """Trust metadata required for safe retrieval acceptance."""
-
     source_id: str
     tenant_id: str
     checksum: str
@@ -27,29 +25,56 @@ class SourceTrustMetadata:
 
 @dataclass(frozen=True)
 class DocumentProvenance:
-    """Citation-friendly provenance metadata for each retrieved document/chunk."""
-
     citation_id: str
     source_id: str
     document_uri: str
     chunk_id: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class RetrievalQuery:
-    """Tenant-aware retrieval query envelope."""
-
     request_id: str
-    tenant_id: str
+    identity: ActorIdentity
     query_text: str
     top_k: int
     allowed_source_ids: Sequence[str] = tuple()
 
+    def __init__(
+        self,
+        *,
+        request_id: str,
+        query_text: str,
+        top_k: int,
+        allowed_source_ids: Sequence[str] = tuple(),
+        identity: ActorIdentity | None = None,
+        tenant_id: str | None = None,
+        actor_id: str = "retrieval-caller",
+        session_id: str = "retrieval-session",
+    ) -> None:
+        if identity is None:
+            if not tenant_id:
+                raise ValueError("identity is required")
+            identity = build_identity(
+                actor_id=actor_id,
+                actor_type=ActorType.ASSISTANT_RUNTIME,
+                tenant_id=tenant_id,
+                session_id=session_id,
+                trust_level="medium",
+                allowed_capabilities=("retrieval.search",),
+            )
+        object.__setattr__(self, "request_id", request_id)
+        object.__setattr__(self, "identity", identity)
+        object.__setattr__(self, "query_text", query_text)
+        object.__setattr__(self, "top_k", top_k)
+        object.__setattr__(self, "allowed_source_ids", allowed_source_ids)
+
+    @property
+    def tenant_id(self) -> str:
+        return self.identity.tenant_id
+
 
 @dataclass(frozen=True)
 class RetrievalDocument:
-    """Retrieved chunk with required trust and provenance metadata."""
-
     document_id: str
     content: str
     trust: SourceTrustMetadata
@@ -58,31 +83,14 @@ class RetrievalDocument:
 
 
 class Retriever(Protocol):
-    def search(self, query: RetrievalQuery) -> Sequence[RetrievalDocument]:
-        """Search trusted documents relevant to the query."""
-        ...
+    def search(self, query: RetrievalQuery) -> Sequence[RetrievalDocument]: ...
 
 
 class SourceRegistry(Protocol):
-    def register(self, source: SourceRegistration) -> None:
-        """Register or update one retrieval source."""
-        ...
-
-    def get(self, source_id: str) -> SourceRegistration | None:
-        """Get one source registration by ID."""
-        ...
-
-    def list_for_tenant(self, tenant_id: str) -> Sequence[SourceRegistration]:
-        """List sources explicitly registered for a tenant."""
-        ...
+    def register(self, source: SourceRegistration) -> None: ...
+    def get(self, source_id: str) -> SourceRegistration | None: ...
+    def list_for_tenant(self, tenant_id: str) -> Sequence[SourceRegistration]: ...
 
 
 class RetrievalFilterHook(Protocol):
-    def allow(
-        self,
-        query: RetrievalQuery,
-        document: RetrievalDocument,
-        source: SourceRegistration,
-    ) -> bool:
-        """Return True when document is acceptable for this query context."""
-        ...
+    def allow(self, query: RetrievalQuery, document: RetrievalDocument, source: SourceRegistration) -> bool: ...

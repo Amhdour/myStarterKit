@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from app.context import build_request_context
+from identity.models import validate_identity
 from app.modeling import LanguageModel, ModelInput
 from app.models import OrchestrationTrace, SupportAgentRequest, SupportAgentResponse
 from policies.contracts import PolicyDecision, PolicyEngine
@@ -48,6 +49,10 @@ class SupportAgentOrchestrator:
 
         trace_id = generate_trace_id()
         context = build_request_context(request, trace_id=trace_id)
+        try:
+            validate_identity(context.identity)
+        except Exception:
+            return self._blocked_response(request, context, tuple(), "invalid identity")
         policy_checks: list[str] = []
 
         self._emit(
@@ -60,7 +65,7 @@ class SupportAgentOrchestrator:
             retrieval_decision = self._evaluate_policy(
                 context=context,
                 action="retrieval.search",
-                decision_context={"actor_id": context.actor_id, "tenant_id": context.tenant_id},
+                decision_context={"actor_id": context.actor_id, "tenant_id": context.tenant_id, "identity": context.identity},
             )
             policy_checks.append(f"retrieval.search={retrieval_decision.allow}")
             if not retrieval_decision.allow:
@@ -79,7 +84,7 @@ class SupportAgentOrchestrator:
 
             query = RetrievalQuery(
                 request_id=request.request_id,
-                tenant_id=context.tenant_id,
+                identity=context.identity,
                 query_text=request.user_text,
                 top_k=top_k,
                 allowed_source_ids=allowed_source_ids,
@@ -172,8 +177,7 @@ class SupportAgentOrchestrator:
                         self.tool_router.route(
                             ToolInvocation(
                                 request_id=request.request_id,
-                                actor_id=context.actor_id,
-                                tenant_id=context.tenant_id,
+                                identity=context.identity,
                                 tool_name=tool.name,
                                 action="propose",
                                 arguments={"draft_answer_preview_length": len(draft_answer)},
@@ -239,7 +243,10 @@ class SupportAgentOrchestrator:
             return response
 
     def _evaluate_policy(self, context, action: str, decision_context: dict) -> PolicyDecision:
-        decision = self.policy_engine.evaluate(request_id=context.request_id, action=action, context=decision_context)
+        try:
+            decision = self.policy_engine.evaluate(request_id=context.request_id, action=action, identity=context.identity, context=decision_context)
+        except TypeError:
+            decision = self.policy_engine.evaluate(request_id=context.request_id, action=action, context=decision_context)
         self._emit(
             context=context,
             event_type=POLICY_DECISION_EVENT,
@@ -275,8 +282,7 @@ class SupportAgentOrchestrator:
             create_audit_event(
                 trace_id=context.trace_id,
                 request_id=context.request_id,
-                actor_id=context.actor_id,
-                tenant_id=context.tenant_id,
+                identity=context.identity,
                 event_type=event_type,
                 payload=payload,
             )

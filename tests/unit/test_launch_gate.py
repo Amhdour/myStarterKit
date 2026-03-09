@@ -21,6 +21,8 @@ def _setup_repo_like_layout(base: Path) -> None:
     (base / "tests/integration").mkdir(parents=True, exist_ok=True)
     (base / "tests/unit").mkdir(parents=True, exist_ok=True)
     (base / "evals/scenarios").mkdir(parents=True, exist_ok=True)
+    (base / "docs/evidence_pack").mkdir(parents=True, exist_ok=True)
+    (base / "config").mkdir(parents=True, exist_ok=True)
 
     (base / "app/orchestrator.py").write_text("# control")
     (base / "policies/engine.py").write_text("# control")
@@ -33,7 +35,7 @@ def _setup_repo_like_layout(base: Path) -> None:
     (base / "retrieval/registry.py").write_text("# control")
     (base / "evals/runner.py").write_text("# control")
     (base / "evals/runtime.py").write_text("# control")
-    (base / "evals/scenarios/security_baseline.json").write_text("{}")
+    (base / "evals/scenarios/security_baseline.json").write_text(json.dumps({"scenarios": [{"id": "forbidden_tool_argument_attempt"}, {"id": "unauthorized_tool_use_attempt"}, {"id": "policy_bypass_attempt"}, {"id": "allowed_tool_execution_path"}, {"id": "confirmation_required_tool_flow"}, {"id": "prompt_injection_direct"}, {"id": "cross_tenant_retrieval_attempt"}, {"id": "auditability_verification"}, {"id": "fallback_to_rag_verification"}] }))
     (base / "telemetry/audit/replay.py").write_text("# control")
     (base / "tests/integration/test_tool_execution_path_enforced.py").write_text("def test_stub():\n    assert True\n")
     (base / "tests/integration/test_tool_executor_bypass_path_enforced.py").write_text("def test_stub():\n    assert True\n")
@@ -46,6 +48,17 @@ def _setup_repo_like_layout(base: Path) -> None:
     (base / "tests/unit/test_eval_runner.py").write_text("def test_stub():\n    assert True\n")
     (base / "tests/unit/test_launch_gate.py").write_text("def test_stub():\n    assert True\n")
     (base / "tests/unit/test_audit_replay.py").write_text("def test_stub():\n    assert True\n")
+    (base / "docs/incident_response_playbooks.md").write_text("""# Playbooks
+
+## policy bypass attempt
+## retrieval boundary violation
+## suspicious tool execution
+## identity mismatch
+## delegation abuse
+## MCP endpoint anomaly
+## secret leakage indicator
+""")
+    (base / "docs/evidence_pack/incident_readiness_summary.md").write_text("# incident readiness")
 
     (base / "verification/security_guarantees_manifest.json").write_text(
         json.dumps(
@@ -145,6 +158,121 @@ def _setup_repo_like_layout(base: Path) -> None:
         {"event_type": "tool.decision", "request_id": "r1", "actor_id": "a1", "tenant_id": "t1"},
         {"event_type": "request.end", "request_id": "r1", "actor_id": "a1", "tenant_id": "t1"},
     ]
+
+
+    (base / "config/integration_inventory.json").write_text(
+        json.dumps(
+            {
+                "integrations": [
+                    {
+                        "integration_id": "model_provider.default",
+                        "category": "model_provider",
+                        "trust_class": "restricted",
+                        "allowed_data_classes": ["public"],
+                        "tenant_scope": "tenant",
+                        "auth_method": "api_key_ref",
+                        "logging_constraints": ["no_raw_prompt_secrets"],
+                        "failure_mode": "deny_closed",
+                    },
+                    {
+                        "integration_id": "retrieval_backend.default",
+                        "category": "retrieval_backend",
+                        "trust_class": "restricted",
+                        "allowed_data_classes": ["internal_support"],
+                        "tenant_scope": "tenant",
+                        "auth_method": "service_identity",
+                        "logging_constraints": ["query_redacted"],
+                        "failure_mode": "deny_closed",
+                    },
+                    {
+                        "integration_id": "tool_endpoint.ticket_lookup",
+                        "category": "tool_endpoint",
+                        "trust_class": "restricted",
+                        "allowed_data_classes": ["internal_support"],
+                        "tenant_scope": "tenant",
+                        "auth_method": "capability_token",
+                        "logging_constraints": ["arguments_redacted"],
+                        "failure_mode": "deny_closed",
+                    },
+                    {
+                        "integration_id": "mcp_server.support_mcp",
+                        "category": "mcp_server",
+                        "trust_class": "untrusted",
+                        "allowed_data_classes": ["metadata"],
+                        "tenant_scope": "tenant",
+                        "auth_method": "mcp_transport",
+                        "logging_constraints": ["origin_required"],
+                        "failure_mode": "deny_closed",
+                    },
+                    {
+                        "integration_id": "webhook.outbound_support",
+                        "category": "webhook",
+                        "trust_class": "restricted",
+                        "allowed_data_classes": ["metadata"],
+                        "tenant_scope": "tenant",
+                        "auth_method": "webhook_secret_ref",
+                        "logging_constraints": ["payload_redacted"],
+                        "failure_mode": "deny_closed",
+                    },
+                    {
+                        "integration_id": "storage_output.audit_jsonl",
+                        "category": "storage_output",
+                        "trust_class": "trusted",
+                        "allowed_data_classes": ["metadata"],
+                        "tenant_scope": "global",
+                        "auth_method": "filesystem",
+                        "logging_constraints": ["redacted_payload"],
+                        "failure_mode": "deny_closed",
+                    },
+                ]
+            }
+        )
+    )
+
+
+    (base / "config/security_drift_manifest.json").write_text(
+        json.dumps(
+            {
+                "required_controls": [
+                    "app/orchestrator.py",
+                    "policies/engine.py",
+                    "retrieval/service.py",
+                    "tools/router.py",
+                    "telemetry/audit/contracts.py",
+                    "launch_gate/engine.py",
+                    "verification/security_guarantees_manifest.json"
+                ],
+                "expected_tool_ids": ["ticket_lookup", "account_update", "admin_shell"],
+                "expected_retrieval_source_ids": ["kb-main"],
+                "expected_integration_ids": [
+                    "model_provider.default",
+                    "retrieval_backend.default",
+                    "tool_endpoint.ticket_lookup",
+                    "mcp_server.support_mcp",
+                    "webhook.outbound_support",
+                    "storage_output.audit_jsonl"
+                ],
+                "required_eval_scenario_ids": [
+                    "forbidden_tool_argument_attempt",
+                    "unauthorized_tool_use_attempt",
+                    "policy_bypass_attempt",
+                    "allowed_tool_execution_path",
+                    "confirmation_required_tool_flow",
+                    "prompt_injection_direct",
+                    "cross_tenant_retrieval_attempt",
+                    "auditability_verification",
+                    "fallback_to_rag_verification"
+                ],
+                "required_audit_record_fields": [
+                    "event_id", "trace_id", "request_id", "actor_id", "tenant_id", "event_type", "event_payload", "created_at"
+                ],
+                "required_replay_fields": [
+                    "replay_version", "trace_id", "request_id", "actor_id", "tenant_id", "event_type_counts", "decision_summary", "timeline"
+                ]
+            }
+        )
+    )
+
     (base / "artifacts/logs/audit.jsonl").write_text("\n".join(json.dumps(row) for row in audit_rows))
 
     (base / "artifacts/logs/replay/security-redteam-20260101T000000Z-auditability.replay.json").write_text(
@@ -507,6 +635,10 @@ def test_scorecard_contains_expected_categories(tmp_path) -> None:
         "eval_suite_evidence",
         "fallback_readiness",
         "kill_switch_readiness",
+        "high_risk_tool_isolation",
+        "integration_inventory",
+        "incident_readiness",
+        "drift_detection",
     }
 
 
@@ -586,3 +718,65 @@ def test_missing_mandatory_controls_yields_no_go(tmp_path) -> None:
 
     assert report.status == NO_GO_STATUS
     assert any("mandatory_controls:" in blocker for blocker in report.blockers)
+
+
+def test_high_risk_tool_isolation_gap_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+
+    policy_path = tmp_path / "policies/bundles/default/policy.json"
+    payload = json.loads(policy_path.read_text())
+    payload.setdefault("tools", {})["high_risk_approved_tools"] = ["admin_shell"]
+    policy_path.write_text(json.dumps(payload))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "high_risk_tool_isolation") == "fail"
+    assert any("high_risk_tool_isolation_readiness:" in blocker for blocker in report.blockers)
+
+
+def test_integration_inventory_drift_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    inventory_path = tmp_path / "config/integration_inventory.json"
+    payload = json.loads(inventory_path.read_text())
+    payload["integrations"] = [entry for entry in payload["integrations"] if entry.get("category") != "webhook"]
+    inventory_path.write_text(json.dumps(payload))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert report.status == NO_GO_STATUS
+    assert _scorecard_status(report, "integration_inventory") == "fail"
+    assert any("integration_inventory_completeness:" in blocker for blocker in report.blockers)
+
+
+
+def test_missing_incident_playbook_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    (tmp_path / "docs/incident_response_playbooks.md").unlink()
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert report.status == NO_GO_STATUS
+    assert _scorecard_status(report, "incident_readiness") == "missing"
+    assert any("incident_readiness_artifacts:" in blocker for blocker in report.blockers)
+
+
+
+def test_drift_detection_blocks_readiness_on_policy_tool_drift(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+
+    policy_path = tmp_path / "policies/bundles/default/policy.json"
+    payload = json.loads(policy_path.read_text())
+    payload.setdefault("tools", {})["allowed_tools"] = ["ticket_lookup", "new_untracked_tool"]
+    policy_path.write_text(json.dumps(payload))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert report.status == NO_GO_STATUS
+    assert _scorecard_status(report, "drift_detection") == "fail"
+    check = next(item for item in report.checks if item.check_name == "drift_detection_readiness")
+    assert check.evidence["critical_failure_count"] > 0
+    assert any("drift_detection_readiness:" in blocker for blocker in report.blockers)
