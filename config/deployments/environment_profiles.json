@@ -1,0 +1,78 @@
+{
+  "profiles": [
+    {
+      "name": "local",
+      "purpose": "developer workflow and deterministic security evals",
+      "example_only": true,
+      "runtime": {"app_runtime": "single-process-python", "isolation": "local-subprocess-sandbox"},
+      "trust_boundaries": {
+        "app_runtime": "developer workstation process boundary",
+        "policy_bundle_delivery": "local filesystem under repo",
+        "retrieval_backend": "in-memory fixture or local backend",
+        "telemetry_sink": "local jsonl files",
+        "audit_replay_storage": "local filesystem artifacts",
+        "high_risk_tool_sandbox": "local subprocess sandbox",
+        "secret_source": "environment variables or local secret refs",
+        "iam_provider": "test issuer or local oidc emulator"
+      },
+      "security_assumptions": [
+        "no multi-tenant host hardening",
+        "sandbox is demo-grade and not kernel isolated"
+      ],
+      "required_evidence": [
+        "artifacts/logs/audit.jsonl",
+        "artifacts/logs/evals/*.summary.json"
+      ]
+    },
+    {
+      "name": "staging",
+      "purpose": "pre-production integration and adversarial validation",
+      "example_only": true,
+      "runtime": {"app_runtime": "containerized service", "isolation": "subprocess-sandbox with constrained runtime"},
+      "trust_boundaries": {
+        "app_runtime": "staging cluster workload boundary",
+        "policy_bundle_delivery": "signed artifact from CI",
+        "retrieval_backend": "tenant-scoped staging retrieval service",
+        "telemetry_sink": "centralized log pipeline",
+        "audit_replay_storage": "immutable staging object storage",
+        "high_risk_tool_sandbox": "dedicated sandbox runtime pool",
+        "secret_source": "staging secret manager",
+        "iam_provider": "enterprise oidc staging tenant"
+      },
+      "security_assumptions": [
+        "staging mirrors production policy gating",
+        "sandbox evidence must be generated for approved high-risk tools"
+      ],
+      "required_evidence": [
+        "artifacts/logs/sandbox/*.json",
+        "artifacts/logs/replay/*.replay.json",
+        "artifacts/logs/launch_gate/*.json"
+      ]
+    },
+    {
+      "name": "production",
+      "purpose": "customer-impacting secure support runtime",
+      "example_only": true,
+      "runtime": {"app_runtime": "hardened container service", "isolation": "dedicated restricted sandbox runtime"},
+      "trust_boundaries": {
+        "app_runtime": "production cluster boundary with workload identity",
+        "policy_bundle_delivery": "signed and versioned policy artifact channel",
+        "retrieval_backend": "tenant-isolated production retrieval service",
+        "telemetry_sink": "centralized tamper-monitored telemetry sink",
+        "audit_replay_storage": "immutable retention-controlled storage",
+        "high_risk_tool_sandbox": "isolated sandbox runtime with explicit evidence",
+        "secret_source": "production secret manager with rotation",
+        "iam_provider": "enterprise oidc production tenant"
+      },
+      "security_assumptions": [
+        "policy delivery and rollback are controlled",
+        "high-risk operations require explicit policy approval and sandbox evidence"
+      ],
+      "required_evidence": [
+        "artifacts/logs/sandbox/*.json",
+        "artifacts/logs/verification/security_guarantees.summary.json",
+        "artifacts/logs/launch_gate/*.json"
+      ]
+    }
+  ]
+}

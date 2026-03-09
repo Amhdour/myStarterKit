@@ -12,6 +12,12 @@ The launch gate verifies launch status using **real artifacts**, not inferred as
 - Eval jsonl records include runtime-realism evidence (`mocked=false` and required runtime components exercised for critical scenarios).
 - Fallback readiness is validated in policy and confirmed by fallback eval scenario evidence.
 - Kill-switch readiness confirms production kill-switch is disabled.
+- IAM integration readiness evidence is present (module/docs/tests + adversarial identity scenarios).
+- Secrets-manager readiness evidence is present (provider abstraction + startup policy/docs).
+- Adversarial-eval coverage readiness is verified from scenario definitions and eval outcomes.
+- Infrastructure boundary evidence and deployment architecture evidence are present and consistent.
+- Production deployment attestation is tracked separately from framework/example readiness.
+  - Attestation must include explicit `verified_controls`, `residual_risks`, and `deferred_true_production_operations` sections.
 
 Status semantics:
 - `go`: no blockers and no residual risks.
@@ -29,3 +35,9 @@ Reproducible evidence workflow (clean-state regeneration of eval/replay/verifica
 ```bash
 ./scripts/regenerate_core_evidence.sh
 ```
+
+
+Extended summary fields:
+- `framework_complete`: core framework-level controls are complete.
+- `production_example_ready`: production-realism example domains are evidenced in-repo.
+- `production_deployment_ready`: external deployment attestation evidence is present (separate from framework/example readiness).

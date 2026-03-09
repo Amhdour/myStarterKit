@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
+from app.infrastructure_boundaries import InfrastructureBoundaryPolicy
 from identity.models import ActorIdentity, validate_identity
 from policies.contracts import PolicyEngine
 
@@ -68,6 +69,7 @@ class IntegrationInventory:
 class IntegrationBoundaryEnforcer:
     inventory: IntegrationInventory
     policy_engine: PolicyEngine
+    infrastructure_policy: InfrastructureBoundaryPolicy | None = None
 
     def enforce(
         self,
@@ -84,6 +86,9 @@ class IntegrationBoundaryEnforcer:
         record = self.inventory.get(integration_id)
         if record is None:
             raise IntegrationBoundaryError("integration not inventoried")
+
+        if self.infrastructure_policy is not None:
+            self.infrastructure_policy.validate_egress(component="app_runtime", destination_id=integration_id)
 
         if tenant_id != identity.tenant_id:
             raise IntegrationBoundaryError("tenant mismatch")

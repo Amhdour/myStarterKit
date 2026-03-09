@@ -6,6 +6,7 @@ from typing import Mapping, Sequence
 from app.modeling import ModelInput
 from app.models import SessionContext, SupportAgentRequest
 from app.orchestrator import SupportAgentOrchestrator
+from identity.models import ActorIdentity, parse_identity
 from policies.engine import RuntimePolicyEngine
 from policies.schema import build_runtime_policy
 from retrieval.contracts import (
@@ -18,7 +19,10 @@ from retrieval.contracts import (
 from retrieval.registry import InMemorySourceRegistry
 from retrieval.service import SecureRetrievalService
 from telemetry.audit.sinks import InMemoryAuditSink
+from tools.capabilities import CapabilityIssuer
 from tools.contracts import ToolDescriptor, ToolInvocation
+from tools.isolation import ToolRiskClass
+from tools.mcp_security import MCPServerProfile, MCPTrustLabel, SecureMCPGateway
 from tools.rate_limit import InMemoryToolRateLimiter
 from tools.registry import InMemoryToolRegistry
 from tools.router import SecureToolRouter
@@ -41,7 +45,10 @@ BASE_POLICY = {
         "allowed_tools": ["ticket_lookup"],
         "forbidden_tools": ["admin_shell"],
         "confirmation_required_tools": ["account_update"],
-        "forbidden_fields_per_tool": {"ticket_lookup": ["ssn", "bypass_policy"], "account_update": ["raw_password"]},
+        "forbidden_fields_per_tool": {
+            "ticket_lookup": ["ssn", "bypass_policy"],
+            "account_update": ["raw_password"],
+        },
         "rate_limits_per_tool": {"ticket_lookup": 2},
     },
 }
@@ -68,11 +75,22 @@ class ScenarioRawRetriever:
         return self.docs
 
 
+class DeterministicMCPTransport:
+    def call(self, *, endpoint: str, payload: Mapping[str, object], timeout_ms: int) -> Mapping[str, object]:
+        return {
+            "status": "ok",
+            "data": {"echo": dict(payload)},
+            "origin": {"endpoint": endpoint, "timeout_ms": timeout_ms},
+        }
+
+
 @dataclass
 class RuntimeFixture:
     orchestrator: SupportAgentOrchestrator
     audit_sink: InMemoryAuditSink
     tool_router: SecureToolRouter
+    capability_issuer: CapabilityIssuer
+    mcp_gateway: SecureMCPGateway
 
 
 def build_runtime_fixture(policy_overrides: Mapping[str, object] | None = None) -> RuntimeFixture:
@@ -119,7 +137,23 @@ def build_runtime_fixture(policy_overrides: Mapping[str, object] | None = None) 
         },
     )
     tool_registry.register(
-        ToolDescriptor(name="admin_shell", description="Privileged shell", allowed=True),
+        ToolDescriptor(name="privileged_export", description="Sensitive export", allowed=True, sensitive=True),
+        executor=lambda invocation: {
+            "status": "ok",
+            "tool": invocation.tool_name,
+            "action": invocation.action,
+            "export": "redacted",
+        },
+    )
+    tool_registry.register(
+        ToolDescriptor(
+            name="admin_shell",
+            description="Privileged shell",
+            allowed=True,
+            risk_class=ToolRiskClass.HIGH,
+            isolation_profile="restricted-shell",
+            isolation_boundary="subprocess-sandbox",
+        ),
         executor=lambda invocation: {
             "status": "executed",
             "command": invocation.arguments.get("command", ""),
@@ -127,7 +161,23 @@ def build_runtime_fixture(policy_overrides: Mapping[str, object] | None = None) 
     )
 
     audit_sink = InMemoryAuditSink()
-    tool_router = SecureToolRouter(registry=tool_registry, rate_limiter=InMemoryToolRateLimiter(), policy_engine=engine)
+    tool_router = SecureToolRouter(registry=tool_registry, rate_limiter=InMemoryToolRateLimiter(), policy_engine=engine, audit_sink=audit_sink)
+    capability_issuer = CapabilityIssuer(policy_engine=engine, audit_sink=audit_sink, policy_version="v1")
+    mcp_gateway = SecureMCPGateway(
+        audit_sink=audit_sink,
+        transport=DeterministicMCPTransport(),
+        servers={
+            "ticketing": MCPServerProfile(
+                server_id="ticketing",
+                endpoint="https://mcp.ticketing.internal",
+                tenant_id="tenant-a",
+                trust_label=MCPTrustLabel.RESTRICTED,
+                allowed_tool_capabilities=("tickets.read",),
+                max_request_bytes=1024,
+                max_response_bytes=1024,
+            )
+        },
+    )
 
     orchestrator = SupportAgentOrchestrator(
         policy_engine=engine,
@@ -137,7 +187,13 @@ def build_runtime_fixture(policy_overrides: Mapping[str, object] | None = None) 
         tool_router=tool_router,
         audit_sink=audit_sink,
     )
-    return RuntimeFixture(orchestrator=orchestrator, audit_sink=audit_sink, tool_router=tool_router)
+    return RuntimeFixture(
+        orchestrator=orchestrator,
+        audit_sink=audit_sink,
+        tool_router=tool_router,
+        capability_issuer=capability_issuer,
+        mcp_gateway=mcp_gateway,
+    )
 
 
 def make_request(*, request_id: str, tenant_id: str, user_text: str) -> SupportAgentRequest:
@@ -148,15 +204,30 @@ def make_request(*, request_id: str, tenant_id: str, user_text: str) -> SupportA
     )
 
 
-def make_invocation(*, request_id: str, tenant_id: str, tool_name: str, action: str, arguments: dict, confirmed: bool = False) -> ToolInvocation:
+def make_invocation(
+    *,
+    request_id: str,
+    tenant_id: str,
+    tool_name: str,
+    action: str,
+    arguments: dict,
+    confirmed: bool = False,
+    capability_token: str | None = None,
+    identity_payload: Mapping[str, object] | None = None,
+) -> ToolInvocation:
+    identity: ActorIdentity | None = None
+    if identity_payload is not None:
+        identity = parse_identity(identity_payload)
     return ToolInvocation(
         request_id=request_id,
-        actor_id="eval-user",
-        tenant_id=tenant_id,
+        actor_id=(identity.actor_id if identity else "eval-user"),
+        tenant_id=(identity.tenant_id if identity else tenant_id),
         tool_name=tool_name,
         action=action,
         arguments=arguments,
         confirmed=confirmed,
+        capability_token=capability_token,
+        identity=identity,
     )
 
 

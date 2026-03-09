@@ -4,6 +4,7 @@ This document shows how the **current starter-kit implementation** runs in a pra
 It is intentionally provider-neutral and does **not** assume unsupported infrastructure.
 
 See also:
+- `docs/deployment/environment_profiles.md`
 - `docs/architecture.md`
 - `docs/architecture_diagrams.md`
 - `docs/trust_boundaries.md`
@@ -168,3 +169,13 @@ This profile matches implemented boundaries and controls without assuming cloud/
 - Are audit/replay artifacts present and structurally complete?
 - Are launch-gate blockers/residual risks tied to concrete artifacts?
 - Are eval artifacts showing real runtime component coverage (not mocked evidence)?
+
+
+## 7) Environment-specific architecture artifacts (example vs enforced)
+
+Environment-specific profiles and dependency/topology specs are defined in:
+- `config/deployments/environment_profiles.json`
+- `config/deployments/topology.spec.json`
+- `config/deployments/security_dependency_inventory.json`
+
+These artifacts are **architecture declarations**. Launch gate validates shape/completeness of these declarations, but does not by itself prove external infrastructure hardening. Operational evidence is still required for production assertions.

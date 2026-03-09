@@ -22,7 +22,7 @@ class SecurityScenario:
 
 
 VALID_SEVERITIES = {"low", "medium", "high", "critical"}
-VALID_OPERATIONS = {"orchestrator_request", "tool_invocation", "tool_execution", "audit_verification"}
+VALID_OPERATIONS = {"orchestrator_request", "tool_invocation", "tool_execution", "audit_verification", "mcp_gateway", "capability_replay", "identity_validation"}
 VALID_EXECUTION_PATHS = {"full_runtime", "router_only"}
 
 

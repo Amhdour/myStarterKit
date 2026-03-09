@@ -3,7 +3,7 @@ import sys
 
 import yaml
 
-from app.secrets import SecretConfigurationError, validate_secret_config
+from app.secrets import SecretConfigurationError, safe_error_message, validate_secret_config
 
 
 def _load_settings() -> dict:
@@ -23,7 +23,7 @@ def main() -> None:
         try:
             validate_secret_config(secret_cfg)
         except SecretConfigurationError as exc:
-            print(f"startup blocked: {exc}")
+            print(f"startup blocked: {safe_error_message(exc)}")
             sys.exit(2)
     print("secure-support-agent startup validation passed")
 

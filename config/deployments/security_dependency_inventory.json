@@ -1,0 +1,10 @@
+{
+  "dependencies": [
+    {"id": "iam.oidc", "type": "identity", "criticality": "high", "used_by": ["identity/iam.py", "policies/engine.py"]},
+    {"id": "policy.bundle.delivery", "type": "policy", "criticality": "high", "used_by": ["policies/loader.py", "launch_gate/engine.py"]},
+    {"id": "retrieval.backend", "type": "data", "criticality": "high", "used_by": ["retrieval/service.py"]},
+    {"id": "audit.sink", "type": "telemetry", "criticality": "high", "used_by": ["telemetry/audit/sinks.py", "telemetry/audit/replay.py"]},
+    {"id": "tool.sandbox.runtime", "type": "execution", "criticality": "high", "used_by": ["tools/sandbox.py", "tools/router.py"]},
+    {"id": "secret.manager", "type": "secret_source", "criticality": "high", "used_by": ["app/secrets.py"]}
+  ]
+}

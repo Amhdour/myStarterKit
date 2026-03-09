@@ -5,6 +5,7 @@ from enum import Enum
 import json
 from typing import Mapping, Protocol, Sequence
 
+from app.infrastructure_boundaries import InfrastructureBoundaryPolicy
 from identity.models import validate_identity
 from telemetry.audit import DENY_EVENT, ERROR_EVENT, TOOL_EXECUTION_ATTEMPT_EVENT
 from telemetry.audit.contracts import AuditSink
@@ -51,6 +52,7 @@ class SecureMCPGateway:
     audit_sink: AuditSink
     transport: MCPTransport
     servers: Mapping[str, MCPServerProfile]
+    infrastructure_policy: InfrastructureBoundaryPolicy | None = None
 
     def build_tool_executor(self, *, server_id: str, capability: str) -> ToolExecutor:
         """Create a registry-safe executor that cannot bypass router/policy/audit."""
@@ -64,6 +66,8 @@ class SecureMCPGateway:
         profile = self._profile(server_id)
         self._check_identity(invocation=invocation, profile=profile)
         self._check_server_policy(profile=profile, capability=capability)
+        if self.infrastructure_policy is not None:
+            self.infrastructure_policy.validate_egress(component="mcp_gateway", destination_id=f"mcp_server.{server_id}")
 
         payload = {
             "request_id": invocation.request_id,

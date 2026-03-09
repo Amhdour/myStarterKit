@@ -39,10 +39,14 @@ launch_gate:
     - fallback_readiness
 
 secrets:
+  provider_policy:
+    # local dev may allow env references; production should set false and use managed refs.
+    allow_env_fallback: true
+    require_managed_providers: false
   # Startup fails closed when required refs are missing.
   required_secret_refs:
     - env:SUPPORT_AGENT_SIGNING_KEY
   # Any sensitive values must be references, not inline secrets.
   sensitive_values:
-    mcp_connector_token: env:MCP_CONNECTOR_TOKEN
-    webhook_secret: env:SUPPORT_WEBHOOK_SECRET
+    mcp_connector_token: vault:kv/support#mcp_connector_token  # provider pattern example
+    webhook_secret: sm:support/webhook_secret                 # provider pattern example

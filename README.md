@@ -45,6 +45,7 @@ Included:
 - Structured request/response/context models.
 - Policy-aware orchestration flow with explicit stage boundaries.
 - Secure retrieval service with source registration and tenant/source enforcement.
+- IAM integration mapping examples for OIDC/JWT, services, operators, and delegated workloads (`docs/iam_integration.md`).
 - Trust/provenance metadata requirements for citation-friendly retrieval results.
 - Secure tool router with explicit allow/deny/require_confirmation decisions and mediated execution path.
 - Policy-as-code runtime engine with validation, risk tiers, environment overrides, kill switch, and fallback-to-RAG handling.

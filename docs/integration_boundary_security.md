@@ -38,3 +38,6 @@ Optional runtime controls include `max_payload_bytes`, `strip_fields`, and `requ
 ## Residual Risk
 
 This starter kit enforces structural controls and policy mediation, but transport-level attestations and cryptographic endpoint identity proofs remain deployment responsibilities.
+
+
+See also: `docs/infrastructure_boundaries.md` for explicit egress and service-boundary policy modeling.

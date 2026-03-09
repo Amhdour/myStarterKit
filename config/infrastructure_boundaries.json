@@ -1,0 +1,73 @@
+{
+  "allowed_destinations": [
+    {
+      "destination_id": "model_provider.default",
+      "host": "model-api.internal.example",
+      "trust_class": "restricted",
+      "category": "model_provider"
+    },
+    {
+      "destination_id": "retrieval_backend.default",
+      "host": "retrieval.internal.example",
+      "trust_class": "restricted",
+      "category": "retrieval_backend"
+    },
+    {
+      "destination_id": "mcp_server.ticketing",
+      "host": "mcp.ticketing.internal",
+      "trust_class": "restricted",
+      "category": "mcp_server"
+    },
+    {
+      "destination_id": "storage_output.audit_jsonl",
+      "host": "audit-storage.internal",
+      "trust_class": "trusted",
+      "category": "storage_output"
+    },
+    {
+      "destination_id": "webhook.outbound_support",
+      "host": "hooks.support.example",
+      "trust_class": "restricted",
+      "category": "webhook"
+    },
+    {
+      "destination_id": "tool_endpoint.ticket_lookup",
+      "host": "tools.internal.example",
+      "trust_class": "restricted",
+      "category": "tool_endpoint"
+    }
+  ],
+  "forbidden_host_patterns": [
+    "169.254.*",
+    "*.metadata.internal",
+    "localhost",
+    "127.*"
+  ],
+  "component_access_rules": {
+    "app_runtime": [
+      "policy_bundle_delivery",
+      "retrieval_backend",
+      "model_provider",
+      "telemetry_sink",
+      "audit_replay_storage",
+      "mcp_server",
+      "tool_endpoint"
+    ],
+    "mcp_gateway": [
+      "mcp_server"
+    ],
+    "high_risk_tool_sandbox": [
+      "tool_endpoint",
+      "storage_output"
+    ]
+  },
+  "internal_only_services": [
+    "policy_bundle_delivery",
+    "telemetry_sink",
+    "audit_replay_storage"
+  ],
+  "sandbox_allowlist": [
+    "tool_endpoint.ticket_lookup",
+    "storage_output.audit_jsonl"
+  ]
+}

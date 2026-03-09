@@ -23,19 +23,25 @@ def _setup_repo_like_layout(base: Path) -> None:
     (base / "evals/scenarios").mkdir(parents=True, exist_ok=True)
     (base / "docs/evidence_pack").mkdir(parents=True, exist_ok=True)
     (base / "config").mkdir(parents=True, exist_ok=True)
+    (base / "identity").mkdir(parents=True, exist_ok=True)
+    (base / "config/deployments").mkdir(parents=True, exist_ok=True)
+    (base / "docs/deployment").mkdir(parents=True, exist_ok=True)
 
     (base / "app/orchestrator.py").write_text("# control")
+    (base / "app/secrets.py").write_text("class SecretProvider:\n    pass")
     (base / "policies/engine.py").write_text("# control")
     (base / "retrieval/service.py").write_text("# control")
     (base / "tools/router.py").write_text("# control")
     (base / "telemetry/audit/contracts.py").write_text("# control")
     (base / "launch_gate/engine.py").write_text("# control")
+    (base / "main.py").write_text("from app.secrets import safe_error_message")
+    (base / "identity/iam.py").write_text("# iam")
     (base / "tools/execution_guard.py").write_text("# control")
     (base / "tools/registry.py").write_text("# control")
     (base / "retrieval/registry.py").write_text("# control")
     (base / "evals/runner.py").write_text("# control")
     (base / "evals/runtime.py").write_text("# control")
-    (base / "evals/scenarios/security_baseline.json").write_text(json.dumps({"scenarios": [{"id": "forbidden_tool_argument_attempt"}, {"id": "unauthorized_tool_use_attempt"}, {"id": "policy_bypass_attempt"}, {"id": "allowed_tool_execution_path"}, {"id": "confirmation_required_tool_flow"}, {"id": "prompt_injection_direct"}, {"id": "cross_tenant_retrieval_attempt"}, {"id": "auditability_verification"}, {"id": "fallback_to_rag_verification"}] }))
+    (base / "evals/scenarios/security_baseline.json").write_text(json.dumps({"scenarios": [{"id": "forbidden_tool_argument_attempt"}, {"id": "unauthorized_tool_use_attempt"}, {"id": "policy_bypass_attempt"}, {"id": "allowed_tool_execution_path"}, {"id": "confirmation_required_tool_flow"}, {"id": "prompt_injection_direct"}, {"id": "cross_tenant_retrieval_attempt"}, {"id": "auditability_verification"}, {"id": "fallback_to_rag_verification"}, {"id": "adversarial_forged_actor_identity"}, {"id": "adversarial_delegation_scope_escalation"}, {"id": "adversarial_mcp_response_manipulation"}, {"id": "adversarial_mcp_oversized_payload"}, {"id": "adversarial_capability_token_replay"}, {"id": "adversarial_unsafe_high_risk_tool_request"}, {"id": "adversarial_prompt_injection_tool_bypass"}, {"id": "adversarial_secret_leakage_attempt"}, {"id": "adversarial_policy_drift_unsafe_allow"}] }))
     (base / "telemetry/audit/replay.py").write_text("# control")
     (base / "tests/integration/test_tool_execution_path_enforced.py").write_text("def test_stub():\n    assert True\n")
     (base / "tests/integration/test_tool_executor_bypass_path_enforced.py").write_text("def test_stub():\n    assert True\n")
@@ -48,6 +54,7 @@ def _setup_repo_like_layout(base: Path) -> None:
     (base / "tests/unit/test_eval_runner.py").write_text("def test_stub():\n    assert True\n")
     (base / "tests/unit/test_launch_gate.py").write_text("def test_stub():\n    assert True\n")
     (base / "tests/unit/test_audit_replay.py").write_text("def test_stub():\n    assert True\n")
+    (base / "tests/unit/test_iam_integration.py").write_text("def test_stub():\n    assert True\n")
     (base / "docs/incident_response_playbooks.md").write_text("""# Playbooks
 
 ## policy bypass attempt
@@ -59,6 +66,9 @@ def _setup_repo_like_layout(base: Path) -> None:
 ## secret leakage indicator
 """)
     (base / "docs/evidence_pack/incident_readiness_summary.md").write_text("# incident readiness")
+    (base / "docs/iam_integration.md").write_text("# iam")
+    (base / "docs/security_secrets.md").write_text("Local development\nDeployment integration guidance\nvault:\nsm:")
+    (base / "docs/evidence_pack/production_deployment_attestation.md").write_text("## verified_controls\n- [x] policy and audit controls validated in staging\n## residual_risks\n- cloud control-plane hardening attestation reviewed by ops\n## deferred_true_production_operations\n- third-party penetration test and signed report pending")
 
     (base / "verification/security_guarantees_manifest.json").write_text(
         json.dumps(
@@ -128,6 +138,8 @@ def _setup_repo_like_layout(base: Path) -> None:
     )
 
     (base / "policies/bundles/default").mkdir(parents=True, exist_ok=True)
+    (base / "config/settings.template.yaml").write_text("secrets:\n  provider_policy:\n    allow_env_fallback: true\n  sensitive_values:\n    mcp_connector_token: vault:x\n    webhook_secret: sm:y")
+
     (base / "policies/bundles/default/policy.json").write_text(
         json.dumps(
             {
@@ -230,6 +242,108 @@ def _setup_repo_like_layout(base: Path) -> None:
     )
 
 
+    
+    (base / "config/deployments/environment_profiles.json").write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "name": "local",
+                        "trust_boundaries": {
+                            "app_runtime": "local",
+                            "policy_bundle_delivery": "file",
+                            "retrieval_backend": "local",
+                            "telemetry_sink": "file",
+                            "audit_replay_storage": "file",
+                            "high_risk_tool_sandbox": "subprocess",
+                            "secret_source": "env",
+                            "iam_provider": "test"
+                        }
+                    },
+                    {
+                        "name": "staging",
+                        "trust_boundaries": {
+                            "app_runtime": "cluster",
+                            "policy_bundle_delivery": "ci",
+                            "retrieval_backend": "staging",
+                            "telemetry_sink": "pipeline",
+                            "audit_replay_storage": "object",
+                            "high_risk_tool_sandbox": "pool",
+                            "secret_source": "manager",
+                            "iam_provider": "oidc"
+                        }
+                    },
+                    {
+                        "name": "production",
+                        "trust_boundaries": {
+                            "app_runtime": "hardened",
+                            "policy_bundle_delivery": "signed",
+                            "retrieval_backend": "prod",
+                            "telemetry_sink": "pipeline",
+                            "audit_replay_storage": "immutable",
+                            "high_risk_tool_sandbox": "isolated",
+                            "secret_source": "manager",
+                            "iam_provider": "oidc"
+                        }
+                    }
+                ]
+            }
+        )
+    )
+    (base / "config/deployments/topology.spec.json").write_text(
+        json.dumps(
+            {
+                "topology": {
+                    "services": [
+                        {"name": "support-app"},
+                        {"name": "policy-bundle"},
+                        {"name": "retrieval-service"},
+                        {"name": "audit-sink"},
+                        {"name": "audit-replay-storage"},
+                        {"name": "high-risk-sandbox"}
+                    ]
+                }
+            }
+        )
+    )
+    (base / "config/deployments/security_dependency_inventory.json").write_text(
+        json.dumps(
+            {
+                "dependencies": [
+                    {"id": "iam.oidc"},
+                    {"id": "policy.bundle.delivery"},
+                    {"id": "retrieval.backend"},
+                    {"id": "audit.sink"},
+                    {"id": "tool.sandbox.runtime"},
+                    {"id": "secret.manager"}
+                ]
+            }
+        )
+    )
+    (base / "docs/deployment/environment_profiles.md").write_text("# deployment profiles")
+    (base / "config/infrastructure_boundaries.json").write_text(
+        json.dumps(
+            {
+                "allowed_destinations": [
+                    {"destination_id": "model_provider.default", "host": "model-api.internal.example", "trust_class": "restricted", "category": "model_provider"},
+                    {"destination_id": "retrieval_backend.default", "host": "retrieval.internal.example", "trust_class": "restricted", "category": "retrieval_backend"},
+                    {"destination_id": "tool_endpoint.ticket_lookup", "host": "tools.internal.example", "trust_class": "restricted", "category": "tool_endpoint"},
+                    {"destination_id": "storage_output.audit_jsonl", "host": "audit.internal.example", "trust_class": "trusted", "category": "storage_output"},
+                    {"destination_id": "webhook.outbound_support", "host": "hooks.support.example", "trust_class": "restricted", "category": "webhook"}
+                ],
+                "forbidden_host_patterns": ["169.254.*", "localhost"],
+                "component_access_rules": {
+                    "app_runtime": ["policy_bundle_delivery", "retrieval_backend", "model_provider", "telemetry_sink", "audit_replay_storage", "tool_endpoint", "mcp_server"],
+                    "mcp_gateway": ["mcp_server"],
+                    "high_risk_tool_sandbox": ["tool_endpoint", "storage_output"]
+                },
+                "internal_only_services": ["policy_bundle_delivery", "telemetry_sink", "audit_replay_storage"],
+                "sandbox_allowlist": ["tool_endpoint.ticket_lookup", "storage_output.audit_jsonl"]
+            }
+        )
+    )
+
+
     (base / "config/security_drift_manifest.json").write_text(
         json.dumps(
             {
@@ -296,10 +410,10 @@ def _setup_repo_like_layout(base: Path) -> None:
             {
                 "suite_name": "security-redteam",
                 "passed": True,
-                "total": 10,
-                "passed_count": 9,
+                "total": 18,
+                "passed_count": 17,
                 "outcomes": {
-                    "pass": 9,
+                    "pass": 17,
                     "fail": 0,
                     "expected_fail": 1,
                     "blocked": 0,
@@ -387,7 +501,51 @@ def _setup_repo_like_layout(base: Path) -> None:
                 },
             },
         },
-        {"scenario_id": "s4", "outcome": "expected_fail", "evidence": {"mocked": False}},
+        {
+            "scenario_id": "adversarial_forged_actor_identity",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True}},
+        },
+        {
+            "scenario_id": "adversarial_delegation_scope_escalation",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True}},
+        },
+        {
+            "scenario_id": "adversarial_mcp_response_manipulation",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "tool_routing": True, "audit_logging": True}},
+        },
+        {
+            "scenario_id": "adversarial_mcp_oversized_payload",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "tool_routing": True, "audit_logging": True}},
+        },
+        {
+            "scenario_id": "adversarial_capability_token_replay",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "tool_routing": True}},
+        },
+        {
+            "scenario_id": "adversarial_unsafe_high_risk_tool_request",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "tool_routing": True}},
+        },
+        {
+            "scenario_id": "adversarial_prompt_injection_tool_bypass",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "retrieval": True, "tool_routing": True, "audit_logging": True}},
+        },
+        {
+            "scenario_id": "adversarial_secret_leakage_attempt",
+            "outcome": "pass",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"orchestrator": True, "policy": True, "retrieval": True, "audit_logging": True}},
+        },
+        {
+            "scenario_id": "adversarial_policy_drift_unsafe_allow",
+            "outcome": "expected_fail",
+            "evidence": {"mocked": False, "runtime_components_exercised": {"policy": True, "tool_routing": True}},
+        },
     ]
     (base / "artifacts/logs/evals/security-redteam-20260101T000000Z.jsonl").write_text(
         "\n".join(json.dumps(item) for item in scenario_rows)
@@ -465,7 +623,7 @@ def test_eval_threshold_failure_blocks_readiness(tmp_path) -> None:
             {
                 "suite_name": "security-redteam",
                 "passed": False,
-                "total": 10,
+                "total": 17,
                 "passed_count": 6,
                 "outcomes": {"pass": 6, "fail": 4, "expected_fail": 0, "blocked": 0, "inconclusive": 0},
             }
@@ -491,9 +649,10 @@ def test_fallback_readiness_failure_is_residual_risk(tmp_path) -> None:
 
     summary_path = tmp_path / "artifacts/logs/evals/security-redteam-20260101T000000Z.summary.json"
     summary = json.loads(summary_path.read_text())
-    summary["passed_count"] = 8
-    summary["outcomes"]["pass"] = 8
-    summary["outcomes"]["expected_fail"] = 2
+    summary["total"] = len(rows)
+    summary["passed_count"] = sum(1 for row in rows if row.get("outcome") == "pass")
+    summary["outcomes"]["pass"] = sum(1 for row in rows if row.get("outcome") == "pass")
+    summary["outcomes"]["expected_fail"] = sum(1 for row in rows if row.get("outcome") == "expected_fail")
     summary_path.write_text(json.dumps(summary))
 
     gate = SecurityLaunchGate(repo_root=tmp_path, config=LaunchGateConfig(min_eval_pass_rate=0.8))
@@ -540,10 +699,10 @@ def test_missing_fallback_scenario_is_residual_risk(tmp_path) -> None:
 
     summary_path = tmp_path / "artifacts/logs/evals/security-redteam-20260101T000000Z.summary.json"
     summary = json.loads(summary_path.read_text())
-    summary["total"] = 9
-    summary["passed_count"] = 8
-    summary["outcomes"]["pass"] = 8
-    summary["outcomes"]["expected_fail"] = 1
+    summary["total"] = len(rows)
+    summary["passed_count"] = sum(1 for row in rows if row.get("outcome") == "pass")
+    summary["outcomes"]["pass"] = sum(1 for row in rows if row.get("outcome") == "pass")
+    summary["outcomes"]["expected_fail"] = sum(1 for row in rows if row.get("outcome") == "expected_fail")
     summary_path.write_text(json.dumps(summary))
 
     gate = SecurityLaunchGate(repo_root=tmp_path, config=LaunchGateConfig(min_eval_pass_rate=0.8))
@@ -637,7 +796,13 @@ def test_scorecard_contains_expected_categories(tmp_path) -> None:
         "kill_switch_readiness",
         "high_risk_tool_isolation",
         "integration_inventory",
+        "infrastructure_boundaries",
+        "iam_integration",
+        "secrets_manager",
+        "adversarial_eval_coverage",
         "incident_readiness",
+        "deployment_architecture",
+        "production_deployment",
         "drift_detection",
     }
 
@@ -735,6 +900,38 @@ def test_high_risk_tool_isolation_gap_blocks_readiness(tmp_path) -> None:
     assert any("high_risk_tool_isolation_readiness:" in blocker for blocker in report.blockers)
 
 
+def test_high_risk_tool_isolation_readiness_passes_with_sandbox_evidence(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+
+    policy_path = tmp_path / "policies/bundles/default/policy.json"
+    payload = json.loads(policy_path.read_text())
+    payload.setdefault("tools", {})["high_risk_approved_tools"] = ["admin_shell"]
+    policy_path.write_text(json.dumps(payload))
+
+    (tmp_path / "tools/router.py").write_text(
+        "high-risk tool missing isolation metadata\n"
+        "high-risk tool sandbox profile unsupported\n"
+        "self.high_risk_sandbox.execute\n"
+    )
+    (tmp_path / "tools/sandbox.py").write_text("# sandbox module")
+    (tmp_path / "artifacts/logs/sandbox").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts/logs/sandbox/demo.json").write_text(
+        json.dumps(
+            {
+                "tool_name": "admin_shell",
+                "profile_name": "restricted-shell",
+                "boundary_name": "subprocess-sandbox",
+                "status": "ok",
+            }
+        )
+    )
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "high_risk_tool_isolation") == "pass"
+
+
 def test_integration_inventory_drift_blocks_readiness(tmp_path) -> None:
     _setup_repo_like_layout(tmp_path)
     inventory_path = tmp_path / "config/integration_inventory.json"
@@ -780,3 +977,118 @@ def test_drift_detection_blocks_readiness_on_policy_tool_drift(tmp_path) -> None
     check = next(item for item in report.checks if item.check_name == "drift_detection_readiness")
     assert check.evidence["critical_failure_count"] > 0
     assert any("drift_detection_readiness:" in blocker for blocker in report.blockers)
+
+
+def test_missing_deployment_architecture_artifacts_fails_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    (tmp_path / "config/deployments/environment_profiles.json").unlink()
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "deployment_architecture") == "missing"
+    assert any("deployment_architecture_evidence:" in blocker for blocker in report.blockers)
+
+
+def test_incomplete_deployment_environment_boundaries_fail_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    path = tmp_path / "config/deployments/environment_profiles.json"
+    payload = json.loads(path.read_text())
+    payload["profiles"] = [item for item in payload["profiles"] if item.get("name") != "production"]
+    path.write_text(json.dumps(payload))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "deployment_architecture") == "fail"
+    check = next(item for item in report.checks if item.check_name == "deployment_architecture_evidence")
+    assert "production" in check.evidence["missing_envs"]
+
+
+def test_missing_infrastructure_boundary_artifact_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    (tmp_path / "config/infrastructure_boundaries.json").unlink()
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "infrastructure_boundaries") == "missing"
+    assert any("infrastructure_boundary_evidence:" in blocker for blocker in report.blockers)
+
+
+def test_infrastructure_boundary_inventory_mismatch_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    boundary_path = tmp_path / "config/infrastructure_boundaries.json"
+    payload = json.loads(boundary_path.read_text())
+    payload["allowed_destinations"] = [entry for entry in payload["allowed_destinations"] if entry.get("destination_id") != "webhook.outbound_support"]
+    boundary_path.write_text(json.dumps(payload))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "infrastructure_boundaries") == "fail"
+    check = next(item for item in report.checks if item.check_name == "infrastructure_boundary_evidence")
+    assert "webhook.outbound_support" in check.evidence["missing_required_destinations"]
+
+
+
+def test_missing_iam_integration_artifacts_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    (tmp_path / "identity/iam.py").unlink()
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "iam_integration") == "missing"
+    assert any("iam_integration_readiness:" in blocker for blocker in report.blockers)
+
+
+def test_missing_secrets_manager_readiness_signals_blocks(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    (tmp_path / "docs/security_secrets.md").write_text("no provider docs")
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "secrets_manager") == "fail"
+    assert any("secrets_manager_readiness:" in blocker for blocker in report.blockers)
+
+
+def test_missing_adversarial_eval_outcome_blocks_readiness(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    eval_jsonl = tmp_path / "artifacts/logs/evals/security-redteam-20260101T000000Z.jsonl"
+    rows = [json.loads(line) for line in eval_jsonl.read_text().splitlines() if line.strip()]
+    rows = [row for row in rows if row.get("scenario_id") != "adversarial_capability_token_replay"]
+    eval_jsonl.write_text("\n".join(json.dumps(item) for item in rows))
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "adversarial_eval_coverage") == "fail"
+    assert any("adversarial_eval_coverage_readiness:" in blocker for blocker in report.blockers)
+
+
+
+
+def test_incomplete_production_attestation_is_residual_risk(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    (tmp_path / "docs/evidence_pack/production_deployment_attestation.md").write_text("## residual_risks\n- pending")
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "production_deployment") == "fail"
+    assert not any("production_deployment_attestation:" in blocker for blocker in report.blockers)
+    assert any("production_deployment_attestation:" in risk for risk in report.residual_risks)
+
+
+def test_missing_production_attestation_is_residual_risk_not_blocker(tmp_path) -> None:
+    _setup_repo_like_layout(tmp_path)
+    (tmp_path / "docs/evidence_pack/production_deployment_attestation.md").unlink()
+
+    gate = SecurityLaunchGate(repo_root=tmp_path)
+    report = gate.evaluate()
+
+    assert _scorecard_status(report, "production_deployment") == "missing"
+    assert not any("production_deployment_attestation:" in blocker for blocker in report.blockers)
+    assert any("production_deployment_attestation:" in risk for risk in report.residual_risks)

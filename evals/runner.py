@@ -16,6 +16,9 @@ from evals.contracts import (
     EvalScenarioResult,
 )
 from evals.runtime import build_runtime_fixture, make_invocation, make_request
+from identity.models import ActorType, IdentityValidationError, build_identity, parse_identity, validate_delegation_chain
+from tools.capabilities import CapabilityTokenError
+from tools.mcp_security import MCPPolicyError
 from evals.scenario import SecurityScenario, load_scenarios
 from telemetry.audit import (
     POLICY_DECISION_EVENT,
@@ -126,6 +129,25 @@ class SecurityEvalRunner:
                 )
 
             elif scenario.operation in {"tool_invocation", "tool_execution"}:
+                capability_token = scenario.invocation.get("capability_token")
+                if bool(scenario.invocation.get("issue_capability", False)):
+                    tool_name = str(scenario.invocation.get("tool_name", "ticket_lookup"))
+                    operation = str(scenario.invocation.get("action", "lookup"))
+                    identity = make_request(
+                        request_id=scenario.invocation.get("request_id", scenario.scenario_id),
+                        tenant_id=scenario.invocation.get("tenant_id", "tenant-a"),
+                        user_text="capability issue helper",
+                    ).session.identity
+                    capability_token = fixture.capability_issuer.issue(
+                        request_id=scenario.invocation.get("request_id", scenario.scenario_id),
+                        identity=identity,
+                        tool_id=tool_name,
+                        allowed_operations=(operation,),
+                        ttl_seconds=int(scenario.invocation.get("capability_ttl_seconds", 60)),
+                        justification="adversarial eval",
+                    )
+
+                identity_payload = scenario.invocation.get("identity_payload")
                 invocation = make_invocation(
                     request_id=scenario.invocation.get("request_id", scenario.scenario_id),
                     tenant_id=scenario.invocation.get("tenant_id", "tenant-a"),
@@ -133,6 +155,8 @@ class SecurityEvalRunner:
                     action=scenario.invocation.get("action", "lookup"),
                     arguments=scenario.invocation.get("arguments", {}),
                     confirmed=bool(scenario.invocation.get("confirmed", False)),
+                    capability_token=capability_token if isinstance(capability_token, str) else None,
+                    identity_payload=identity_payload if isinstance(identity_payload, dict) else None,
                 )
 
                 if scenario.operation == "tool_execution":
@@ -161,6 +185,108 @@ class SecurityEvalRunner:
                         ),
                     }
                 )
+
+            elif scenario.operation == "capability_replay":
+                invocation_config = scenario.invocation
+                identity = build_identity(
+                    actor_id="eval-runtime",
+                    actor_type=ActorType.ASSISTANT_RUNTIME,
+                    tenant_id=str(invocation_config.get("tenant_id", "tenant-a")),
+                    session_id=f"session-{invocation_config.get('request_id', scenario.scenario_id)}",
+                    trust_level="high",
+                    allowed_capabilities=("tools.issue_capability", "tools.invoke", "tools.route"),
+                )
+                token = fixture.capability_issuer.issue(
+                    request_id=invocation_config.get("request_id", scenario.scenario_id),
+                    identity=identity,
+                    tool_id=str(invocation_config.get("tool_name", "privileged_export")),
+                    allowed_operations=(str(invocation_config.get("action", "export")),),
+                    ttl_seconds=60,
+                    justification="capability replay test",
+                )
+                identity_payload = {
+                    "actor_id": identity.actor_id,
+                    "actor_type": identity.actor_type.value,
+                    "tenant_id": identity.tenant_id,
+                    "session_id": identity.session_id,
+                    "delegation_chain": [],
+                    "auth_context": dict(identity.auth_context),
+                    "trust_level": identity.trust_level,
+                    "allowed_capabilities": list(identity.allowed_capabilities),
+                }
+                first = make_invocation(
+                    request_id=str(invocation_config.get("request_id", scenario.scenario_id)),
+                    tenant_id=str(invocation_config.get("tenant_id", "tenant-a")),
+                    tool_name=str(invocation_config.get("tool_name", "privileged_export")),
+                    action=str(invocation_config.get("action", "export")),
+                    arguments=invocation_config.get("arguments", {}),
+                    confirmed=True,
+                    capability_token=token,
+                    identity_payload=identity_payload,
+                )
+                second = make_invocation(
+                    request_id=f"{invocation_config.get('request_id', scenario.scenario_id)}-replay",
+                    tenant_id=str(invocation_config.get("tenant_id", "tenant-a")),
+                    tool_name=str(invocation_config.get("tool_name", "privileged_export")),
+                    action=str(invocation_config.get("action", "export")),
+                    arguments=invocation_config.get("arguments", {}),
+                    confirmed=True,
+                    capability_token=token,
+                    identity_payload=identity_payload,
+                )
+                first_decision = fixture.tool_router.route(first)
+                second_decision = fixture.tool_router.route(second)
+                evidence.update(
+                    {
+                        "first_decision_status": first_decision.status,
+                        "second_decision_status": second_decision.status,
+                        "second_decision_reason": second_decision.reason,
+                        "runtime_components_exercised": _runtime_components_exercised(operation="tool_invocation", event_types=[]),
+                    }
+                )
+
+            elif scenario.operation == "identity_validation":
+                payload = scenario.request.get("identity_payload", {})
+                action = str(scenario.request.get("action", "tools.invoke"))
+                try:
+                    identity = parse_identity(payload)
+                    validate_delegation_chain(identity, action=action)
+                    evidence.update({"identity_validation": "accepted", "identity_error": ""})
+                except Exception as exc:
+                    evidence.update({"identity_validation": "denied", "identity_error": str(exc)})
+                evidence.update({"runtime_components_exercised": _runtime_components_exercised(operation=scenario.operation, event_types=[])})
+
+            elif scenario.operation == "mcp_gateway":
+                request_id = str(scenario.request.get("request_id", scenario.scenario_id))
+                invocation = make_invocation(
+                    request_id=request_id,
+                    tenant_id=str(scenario.request.get("tenant_id", "tenant-a")),
+                    tool_name="ticket_lookup",
+                    action="lookup",
+                    arguments=scenario.request.get("arguments", {}),
+                )
+
+                class _ScenarioTransport:
+                    def call(self, *, endpoint: str, payload: dict, timeout_ms: int):
+                        mode = str(scenario.request.get("transport_mode", "ok"))
+                        if mode == "schema_tamper":
+                            return {"status": "ok", "data": "not-a-map", "origin": {"endpoint": endpoint}}
+                        if mode == "oversized":
+                            return {"status": "ok", "data": {"blob": "x" * 5000}, "origin": {"endpoint": endpoint}}
+                        return {"status": "ok", "data": {"ticket": "123"}, "origin": {"endpoint": endpoint}}
+
+                fixture.mcp_gateway.transport = _ScenarioTransport()
+                try:
+                    response = fixture.mcp_gateway.invoke_tool(
+                        server_id=str(scenario.request.get("server_id", "ticketing")),
+                        capability=str(scenario.request.get("capability", "tickets.read")),
+                        invocation=invocation,
+                    )
+                    evidence.update({"mcp_status": "ok", "mcp_response": dict(response)})
+                except Exception as exc:
+                    evidence.update({"mcp_status": "denied", "mcp_error": str(exc)})
+                event_types = [event.event_type for event in fixture.audit_sink.events]
+                evidence.update({"event_types": event_types, "decision_log": _extract_decision_log(fixture.audit_sink.events), "runtime_components_exercised": _runtime_components_exercised(operation=scenario.operation, event_types=event_types)})
 
             elif scenario.operation == "audit_verification":
                 request = make_request(
@@ -362,13 +488,13 @@ def _runtime_components_exercised(*, operation: str, event_types: list[str]) -> 
             "audit_logging": len(event_set) > 0,
         }
 
-    if operation in {"tool_invocation", "tool_execution"}:
+    if operation in {"tool_invocation", "tool_execution", "capability_replay", "mcp_gateway", "identity_validation"}:
         return {
             "orchestrator": False,
             "retrieval": False,
             "policy": True,
-            "tool_routing": True,
-            "audit_logging": False,
+            "tool_routing": operation in {"tool_invocation", "tool_execution", "capability_replay", "mcp_gateway"},
+            "audit_logging": operation == "mcp_gateway",
         }
 
     return {name: False for name in RUNTIME_COMPONENTS}
@@ -443,6 +569,34 @@ def _evaluate_expectations(expectations: dict, evidence: dict) -> tuple[bool, st
         expected = str(expectations["execution_result_status"])
         actual = str((evidence.get("execution_result") or {}).get("status", ""))
         checks.append((actual == expected, f"expected execution result status {expected}"))
+    if "required_policy_reasons" in expectations and isinstance(expectations["required_policy_reasons"], list):
+        reasons = [str(item.get("reason", "")) for item in evidence.get("decision_log", {}).get("policy_decisions", [])]
+        for expected in expectations["required_policy_reasons"]:
+            checks.append((any(str(expected) in reason for reason in reasons), f"required policy reason missing: {expected}"))
+
+    if "required_deny_reasons" in expectations and isinstance(expectations["required_deny_reasons"], list):
+        reasons = [str(item.get("reason", "")) for item in evidence.get("decision_log", {}).get("deny_events", [])]
+        reasons.append(str(evidence.get("tool_decision_reason", "")))
+        reasons.append(str(evidence.get("second_decision_reason", "")))
+        reasons.append(str(evidence.get("mcp_error", "")))
+        reasons.append(str(evidence.get("identity_error", "")))
+        for expected in expectations["required_deny_reasons"]:
+            checks.append((any(str(expected) in reason for reason in reasons), f"required deny reason missing: {expected}"))
+
+    if "replay_required_complete" in expectations:
+        expected = bool(expectations["replay_required_complete"])
+        actual = bool(evidence.get("replay_required_events_complete", False))
+        checks.append((actual == expected, f"expected replay_required_events_complete={expected}"))
+
+    if "mcp_status" in expectations:
+        checks.append((str(evidence.get("mcp_status", "")) == str(expectations["mcp_status"]), f"expected mcp_status {expectations['mcp_status']}"))
+
+    if "identity_validation" in expectations:
+        checks.append((str(evidence.get("identity_validation", "")) == str(expectations["identity_validation"]), f"expected identity_validation {expectations['identity_validation']}"))
+
+    if "second_decision_status" in expectations:
+        checks.append((str(evidence.get("second_decision_status", "")) == str(expectations["second_decision_status"]), f"expected second_decision_status {expectations['second_decision_status']}"))
+
 
     required_events = expectations.get("required_events", [])
     if isinstance(required_events, list):

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
 if TYPE_CHECKING:
@@ -25,6 +26,7 @@ from tools.contracts import (
 )
 from tools.execution_guard import enter_router_execution_context, exit_router_execution_context
 from tools.isolation import ToolRiskClass
+from tools.sandbox import HighRiskSandbox, LocalSubprocessSandbox, SandboxExecutionProfile
 from tools.rate_limit import ToolRateLimiter
 
 
@@ -37,6 +39,21 @@ class SecureToolRouter:
     policy_engine: "PolicyEngine | None" = None
     capability_validator: CapabilityValidator = field(default_factory=lambda: CapabilityValidator(expected_policy_version="v1"))
     audit_sink: AuditSink | None = None
+    high_risk_sandbox: HighRiskSandbox = field(
+        default_factory=lambda: LocalSubprocessSandbox(
+            profiles={
+                "restricted-shell": SandboxExecutionProfile(
+                    profile_name="restricted-shell",
+                    boundary_name="subprocess-sandbox",
+                    timeout_seconds=5,
+                    network_policy="disabled",
+                    allowed_commands=("/bin/echo", "python3"),
+                    allowed_env_keys=("PATH", "LANG", "LC_ALL"),
+                )
+            },
+            repo_root=Path.cwd(),
+        )
+    )
     _execution_secret: object = field(default_factory=object, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -72,6 +89,8 @@ class SecureToolRouter:
         if descriptor.risk_class == ToolRiskClass.HIGH:
             if not descriptor.isolation_profile or not descriptor.isolation_boundary:
                 return self._deny(invocation, "high-risk tool missing isolation metadata")
+            if not self.high_risk_sandbox.supports(descriptor):
+                return self._deny(invocation, "high-risk tool sandbox profile unsupported")
 
 
         if descriptor.sensitive:
@@ -168,6 +187,16 @@ class SecureToolRouter:
         decision = self.route(invocation)
         if decision.status != ALLOWED_DECISION:
             return decision, None
+
+        descriptor = self.registry.get(invocation.tool_name)
+        if descriptor is None:
+            return self._deny(invocation, "tool is not registered"), None
+
+        if descriptor.risk_class == ToolRiskClass.HIGH:
+            try:
+                return decision, self.high_risk_sandbox.execute(invocation, descriptor)
+            except Exception as exc:
+                return self._deny(invocation, f"sandbox execution failed: {type(exc).__name__}"), None
 
         token = enter_router_execution_context(self._execution_secret)
         try:
