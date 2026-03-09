@@ -1,0 +1,20 @@
+{
+  "engagement_id": "retrofit-<client>-<date>",
+  "controls": [
+    {
+      "control_surface": "identity|policy|retrieval|tools|integrations|telemetry|replay|incident_readiness",
+      "target_control_reference": "",
+      "current_state": "missing|partial|implemented",
+      "evidence_paths": [],
+      "compensating_control": "",
+      "phase": "observe_only|deny_on_critical|tighten_controls|gate_release",
+      "blocking_gap": false,
+      "deferred_hardening": ""
+    }
+  ],
+  "launch_gate_applicability": {
+    "can_run_launch_gate": false,
+    "missing_inputs": [],
+    "expected_blockers": []
+  }
+}

@@ -34,3 +34,29 @@ This file tracks **known gaps that are not claimed as implemented guarantees**.
 - Mitigation plan
 - Owner
 - Target date
+
+## Identity-model residual risks
+
+- Legacy call paths that construct compatibility identities (`legacy-*`) should be removed over time to enforce fully explicit caller identity at every entrypoint.
+- `auth_context` values are structurally validated but not cryptographically verified in this starter kit.
+- Delegation-chain trust depends on upstream attestation quality; invalid structure is blocked, but semantic correctness of delegation reasons is policy/process-controlled.
+
+## Delegation residual risks
+
+- Delegation timestamps are validated for format and expiry but are not bound to signed time-attestation in this starter baseline.
+- Parent authority is enforced via chain scope continuity and capability narrowing; full external principal attestation remains future work.
+
+## MCP residual risks
+
+- Transport security is delegated to the configured MCP transport implementation; baseline controls assume transport plugin correctness.
+- Schema validation is structural and does not yet enforce cryptographic origin attestation of endpoint identity.
+
+## Capability-token residual risks
+
+- Capability tokens are currently JSON payloads validated structurally; signature-based token authenticity is future hardening work.
+- One-time replay protection is process-local; distributed shared-state replay defense is future work.
+
+## High-risk tool isolation residual risks
+
+- Isolation is currently enforced as a declarative/runtime control interface; full containerized isolation execution backends are deferred work.
+- Launch gate now surfaces high-risk readiness gaps, but environment-level sandbox guarantees depend on deployment/runtime integration.

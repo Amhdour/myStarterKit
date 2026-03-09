@@ -37,3 +37,12 @@ launch_gate:
     - replay_artifact
     - eval_threshold
     - fallback_readiness
+
+secrets:
+  # Startup fails closed when required refs are missing.
+  required_secret_refs:
+    - env:SUPPORT_AGENT_SIGNING_KEY
+  # Any sensitive values must be references, not inline secrets.
+  sensitive_values:
+    mcp_connector_token: env:MCP_CONNECTOR_TOKEN
+    webhook_secret: env:SUPPORT_WEBHOOK_SECRET

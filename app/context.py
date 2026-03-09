@@ -10,7 +10,5 @@ def build_request_context(request: SupportAgentRequest, *, trace_id: str) -> Req
     return RequestContext(
         trace_id=trace_id,
         request_id=request.request_id,
-        session_id=session.session_id,
-        actor_id=session.actor_id,
-        tenant_id=session.tenant_id,
+        identity=session.identity,
     )

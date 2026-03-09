@@ -20,6 +20,14 @@ class ToolPolicy:
     confirmation_required_tools: tuple[str, ...] = tuple()
     forbidden_fields_per_tool: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     rate_limits_per_tool: Mapping[str, int] = field(default_factory=dict)
+    high_risk_approved_tools: tuple[str, ...] = tuple()
+
+
+@dataclass(frozen=True)
+class IntegrationPolicy:
+    allowed_integrations: tuple[str, ...] = tuple()
+    tenant_allowed_integrations: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    allowed_data_classes: tuple[str, ...] = tuple()
 
 
 @dataclass(frozen=True)
@@ -38,6 +46,7 @@ class RuntimePolicy:
     risk_tiers: Mapping[str, RiskTierPolicy]
     retrieval: RetrievalPolicy
     tools: ToolPolicy
+    integrations: IntegrationPolicy
     validation_errors: tuple[str, ...] = tuple()
 
 
@@ -53,6 +62,7 @@ def restrictive_policy(*, environment: str, reason: str) -> RuntimePolicy:
         risk_tiers={"high": RiskTierPolicy(max_retrieval_top_k=1, tools_enabled=False)},
         retrieval=RetrievalPolicy(),
         tools=ToolPolicy(),
+        integrations=IntegrationPolicy(),
         validation_errors=(reason,),
     )
 
@@ -78,6 +88,7 @@ def build_runtime_policy(*, environment: str, payload: Mapping[str, Any]) -> Run
     retrieval_cfg = payload.get("retrieval", {})
     tools_cfg = payload.get("tools", {})
     risk_cfg = payload.get("risk_tiers", {})
+    integrations_cfg = payload.get("integrations", {})
 
     if not isinstance(global_cfg, Mapping):
         errors.append("global must be an object")
@@ -91,6 +102,9 @@ def build_runtime_policy(*, environment: str, payload: Mapping[str, Any]) -> Run
     if not isinstance(risk_cfg, Mapping):
         errors.append("risk_tiers must be an object")
         risk_cfg = {}
+    if not isinstance(integrations_cfg, Mapping):
+        errors.append("integrations must be an object")
+        integrations_cfg = {}
 
     default_risk_tier = global_cfg.get("default_risk_tier", "high")
     if not isinstance(default_risk_tier, str):
@@ -172,6 +186,36 @@ def build_runtime_policy(*, environment: str, payload: Mapping[str, Any]) -> Run
         confirmation_required_tools=confirmation_required_tools,
         forbidden_fields_per_tool=forbidden_fields_per_tool,
         rate_limits_per_tool=rate_limits_per_tool,
+        high_risk_approved_tools=_tuple_of_strings(tools_cfg.get("high_risk_approved_tools", []), field_name="tools.high_risk_approved_tools", errors=errors),
+    )
+
+    tenant_allowed_integrations: dict[str, tuple[str, ...]] = {}
+    raw_tenant_integrations = integrations_cfg.get("tenant_allowed_integrations", {})
+    if isinstance(raw_tenant_integrations, Mapping):
+        for tenant, integration_ids in raw_tenant_integrations.items():
+            if not isinstance(tenant, str):
+                errors.append("integrations.tenant_allowed_integrations keys must be strings")
+                continue
+            tenant_allowed_integrations[tenant] = _tuple_of_strings(
+                integration_ids,
+                field_name=f"integrations.tenant_allowed_integrations.{tenant}",
+                errors=errors,
+            )
+    else:
+        errors.append("integrations.tenant_allowed_integrations must be an object")
+
+    integrations = IntegrationPolicy(
+        allowed_integrations=_tuple_of_strings(
+            integrations_cfg.get("allowed_integrations", []),
+            field_name="integrations.allowed_integrations",
+            errors=errors,
+        ),
+        tenant_allowed_integrations=tenant_allowed_integrations,
+        allowed_data_classes=_tuple_of_strings(
+            integrations_cfg.get("allowed_data_classes", []),
+            field_name="integrations.allowed_data_classes",
+            errors=errors,
+        ),
     )
 
     risk_tiers: dict[str, RiskTierPolicy] = {}
@@ -201,5 +245,6 @@ def build_runtime_policy(*, environment: str, payload: Mapping[str, Any]) -> Run
         risk_tiers=risk_tiers,
         retrieval=retrieval,
         tools=tools,
+        integrations=integrations,
         validation_errors=tuple(errors),
     )

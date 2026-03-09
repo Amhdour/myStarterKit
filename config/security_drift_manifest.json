@@ -1,0 +1,67 @@
+{
+  "required_controls": [
+    "app/orchestrator.py",
+    "policies/engine.py",
+    "retrieval/service.py",
+    "tools/router.py",
+    "telemetry/audit/contracts.py",
+    "launch_gate/engine.py",
+    "verification/security_guarantees_manifest.json"
+  ],
+  "expected_tool_ids": [
+    "ticket_lookup",
+    "account_update",
+    "payments_export"
+  ],
+  "expected_retrieval_source_ids": [
+    "kb-main",
+    "kb-faq",
+    "kb-main-b"
+  ],
+  "expected_integration_ids": [
+    "model_provider.default",
+    "retrieval_backend.default",
+    "tool_endpoint.ticket_lookup",
+    "tool_endpoint.account_update",
+    "mcp_server.support_mcp",
+    "storage_output.audit_jsonl",
+    "webhook.outbound_support"
+  ],
+  "required_eval_scenario_ids": [
+    "forbidden_tool_argument_attempt",
+    "unauthorized_tool_use_attempt",
+    "policy_bypass_attempt",
+    "allowed_tool_execution_path",
+    "confirmation_required_tool_flow",
+    "prompt_injection_direct",
+    "cross_tenant_retrieval_attempt",
+    "auditability_verification",
+    "fallback_to_rag_verification"
+  ],
+  "required_audit_record_fields": [
+    "event_id",
+    "trace_id",
+    "request_id",
+    "actor_id",
+    "actor_type",
+    "tenant_id",
+    "session_id",
+    "delegation_chain",
+    "auth_context",
+    "event_type",
+    "event_payload",
+    "created_at"
+  ],
+  "required_replay_fields": [
+    "replay_version",
+    "trace_id",
+    "request_id",
+    "actor_id",
+    "tenant_id",
+    "event_type_counts",
+    "delegation_chain",
+    "coverage",
+    "decision_summary",
+    "timeline"
+  ]
+}

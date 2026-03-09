@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Mapping, Protocol
 
+from identity.models import ActorIdentity
+
 
 @dataclass(frozen=True)
 class PolicyDecision:
@@ -17,6 +19,6 @@ class PolicyDecision:
 
 
 class PolicyEngine(Protocol):
-    def evaluate(self, request_id: str, action: str, context: dict) -> PolicyDecision:
+    def evaluate(self, request_id: str, action: str, context: dict, identity: ActorIdentity | None = None) -> PolicyDecision:
         """Evaluate if an action is permitted under active policy."""
         ...

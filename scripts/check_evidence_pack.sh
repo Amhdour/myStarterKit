@@ -14,6 +14,11 @@ required=(
   docs/evidence_pack/launch_gate_summary.md
   docs/evidence_pack/residual_risks.md
   docs/evidence_pack/open_issues.md
+  docs/evidence_pack/incident_readiness_summary.md
+  docs/evidence_pack/retrofit_evidence_checklist.md
+  docs/retrofit_mode.md
+  docs/templates/retrofit_system_profile.template.json
+  docs/templates/retrofit_control_mapping.template.json
 )
 
 missing=()
@@ -27,3 +32,5 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 echo "Evidence-pack check passed."
+
+./scripts/check_drift.sh

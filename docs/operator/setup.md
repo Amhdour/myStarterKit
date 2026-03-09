@@ -62,3 +62,10 @@ python -c "from evals.runtime import build_runtime_fixture, make_invocation; f=b
 ```bash
 python -c "from pathlib import Path; from launch_gate.engine import SecurityLaunchGate; print(SecurityLaunchGate(repo_root=Path('.')).evaluate().summary)"
 ```
+
+
+## Secrets handling
+
+- Keep `config/settings.local.yaml` values as `env:...` references for sensitive material.
+- Export required secrets before startup checks: `SUPPORT_AGENT_SIGNING_KEY`, `MCP_CONNECTOR_TOKEN`, `SUPPORT_WEBHOOK_SECRET`.
+- Run `python main.py` to fail fast when required secret refs are missing or insecurely embedded.

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from app.secrets import redact_mapping
 from telemetry.audit.contracts import (
     DENY_EVENT,
     FALLBACK_EVENT,
@@ -46,6 +47,7 @@ class ReplayArtifact:
     request_id: str
     actor_id: str
     tenant_id: str
+    delegation_chain: tuple[dict[str, object], ...]
     timeline: tuple[dict, ...]
     event_type_counts: Mapping[str, int] = field(default_factory=dict)
     coverage: Mapping[str, bool] = field(default_factory=dict)
@@ -84,6 +86,7 @@ def build_replay_artifact(events: Sequence[AuditEvent]) -> ReplayArtifact:
         request_id=first.request_id,
         actor_id=first.actor_id,
         tenant_id=first.tenant_id,
+        delegation_chain=tuple({"parent_actor_id": grant.parent_actor_id, "child_actor_id": grant.child_actor_id, "delegated_capabilities": list(grant.delegated_capabilities), "delegation_reason": grant.delegation_reason, "issued_at": grant.issued_at, "expires_at": grant.expires_at, "scope_constraints": dict(grant.scope_constraints)} for grant in first.identity.delegation_chain),
         timeline=tuple(timeline),
         event_type_counts=event_type_counts,
         coverage=coverage,
@@ -111,6 +114,7 @@ def write_replay_artifact(artifact: ReplayArtifact, output_path: Path) -> None:
                 "actor_id": artifact.actor_id,
                 "tenant_id": artifact.tenant_id,
                 "event_type_counts": dict(artifact.event_type_counts),
+                "delegation_chain": list(artifact.delegation_chain),
                 "coverage": dict(artifact.coverage),
                 "decision_summary": dict(artifact.decision_summary),
                 "timeline": list(artifact.timeline),
@@ -122,12 +126,10 @@ def write_replay_artifact(artifact: ReplayArtifact, output_path: Path) -> None:
 
 
 def _sanitize_payload(payload: Mapping[str, object]) -> dict[str, object]:
-    sanitized: dict[str, object] = {}
-    for key, value in payload.items():
+    sanitized = redact_mapping(payload)
+    for key in tuple(sanitized.keys()):
         if key.lower() in SENSITIVE_FIELD_NAMES:
             sanitized[key] = "[redacted]"
-        else:
-            sanitized[key] = value
     return sanitized
 
 
