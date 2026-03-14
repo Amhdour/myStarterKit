@@ -1,0 +1,38 @@
++ mkdir -p artifacts/logs/evals artifacts/logs/replay artifacts/logs/verification artifacts/logs/launch_gate
++ rm -f artifacts/logs/evals/security-redteam-*.jsonl artifacts/logs/evals/security-redteam-*.summary.json
++ rm -f artifacts/logs/replay/security-redteam-*.replay.json
++ rm -f artifacts/logs/verification/security_guarantees.summary.json artifacts/logs/verification/security_guarantees.summary.md
++ rm -f artifacts/logs/launch_gate/security-readiness-*.json
++ python -m evals.runner --scenario-file evals/scenarios/security_baseline.json --output-dir artifacts/logs/evals --stamp 20260101T000000Z
+pass=18; fail=2; expected_fail=2; blocked=2; inconclusive=0
++ python - <<'PY'
+from pathlib import Path
+from verification.runner import (
+    run_security_guarantees_verification,
+    write_security_guarantees_markdown_summary,
+    write_security_guarantees_report,
+)
+
+repo_root = Path('.')
+report = run_security_guarantees_verification(repo_root, require_evidence_presence=True)
+write_security_guarantees_report(report, repo_root / 'artifacts/logs/verification/security_guarantees.summary.json')
+write_security_guarantees_markdown_summary(report, repo_root / 'artifacts/logs/verification/security_guarantees.summary.md')
+print(report['status'])
+if str(report.get('status')) != 'pass':
+    raise SystemExit('security guarantees verification did not pass')
+PY
+pass
++ python -m launch_gate.engine > artifacts/logs/launch_gate/security-readiness-20260101T000000Z.json
++ python - <<'PY'
+import json
+from pathlib import Path
+
+path = Path('artifacts/logs/launch_gate/security-readiness-20260101T000000Z.json')
+payload = json.loads(path.read_text())
+status = str(payload.get('status', 'unknown'))
+print(status)
+if status != 'go':
+    raise SystemExit(f'launch gate status is not go: {status}')
+PY
+no_go
+launch gate status is not go: no_go

@@ -1,0 +1,139 @@
+# OS Information
+Linux 41dac80cff03 6.12.47 #1 SMP Mon Oct 27 10:01:15 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux
+
+PRETTY_NAME="Ubuntu 24.04.3 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+VERSION="24.04.3 LTS (Noble Numbat)"
+VERSION_CODENAME=noble
+ID=ubuntu
+ID_LIKE=debian
+HOME_URL="https://www.ubuntu.com/"
+SUPPORT_URL="https://help.ubuntu.com/"
+BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+UBUNTU_CODENAME=noble
+LOGO=ubuntu-logo
+
+# Python Version
+Python 3.10.19
+Python 3.10.19
+
+# Pip Version
+pip 25.3 from /root/.pyenv/versions/3.10.19/lib/python3.10/site-packages/pip (python 3.10)
+pip 25.3 from /root/.pyenv/versions/3.10.19/lib/python3.10/site-packages/pip (python 3.10)
+
+# Installed Python Dependencies (pip list)
+Package           Version
+----------------- -------
+black             25.12.0
+click             8.3.1
+exceptiongroup    1.3.1
+iniconfig         2.3.0
+isort             7.0.0
+librt             0.7.7
+mypy              1.19.1
+mypy_extensions   1.1.0
+nodeenv           1.10.0
+packaging         25.0
+pathspec          1.0.3
+pip               25.3
+platformdirs      4.5.1
+pluggy            1.6.0
+Pygments          2.19.2
+pyright           1.1.408
+pytest            9.0.2
+pytokens          0.3.0
+ruff              0.14.11
+setuptools        79.0.1
+tomli             2.4.0
+typing_extensions 4.15.0
+
+# Installed Python Dependencies (pip3 list)
+Package           Version
+----------------- -------
+black             25.12.0
+click             8.3.1
+exceptiongroup    1.3.1
+iniconfig         2.3.0
+isort             7.0.0
+librt             0.7.7
+mypy              1.19.1
+mypy_extensions   1.1.0
+nodeenv           1.10.0
+packaging         25.0
+pathspec          1.0.3
+pip               25.3
+platformdirs      4.5.1
+pluggy            1.6.0
+Pygments          2.19.2
+pyright           1.1.408
+pytest            9.0.2
+pytokens          0.3.0
+ruff              0.14.11
+setuptools        79.0.1
+tomli             2.4.0
+typing_extensions 4.15.0
+
+# Environment Variables
+CODEX_CI=1
+CODEX_HOME=/opt/codex
+CODEX_INTERNAL_ORIGINATOR_OVERRIDE=codex_web_agent
+CODEX_PROXY_CERT=/usr/local/share/ca-certificates/envoy-mitmproxy-ca-cert.crt
+COLORTERM=
+COREPACK_DEFAULT_TO_LATEST=0
+COREPACK_ENABLE_AUTO_PIN=0
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+COREPACK_ENABLE_STRICT=0
+DEBIAN_FRONTEND=noninteractive
+ELECTRON_GET_USE_PROXY=true
+GH_PAGER=cat
+GIT_PAGER=cat
+GOBIN=/root/.local/share/mise/installs/go/1.25.1/bin
+GOROOT=/root/.local/share/mise/installs/go/1.25.1
+GRADLE_OPTS=-Dhttp.proxyHost=proxy -Dhttp.proxyPort=8080 -Dhttps.proxyHost=proxy -Dhttps.proxyPort=8080
+HOME=/root
+HOSTNAME=41dac80cff03
+HTTPS_PROXY=http://proxy:8080
+HTTP_PROXY=http://proxy:8080
+JAVA_HOME=/root/.local/share/mise/installs/java/25.0.1
+LANG=C.UTF-8
+LC_ALL=C.UTF-8
+LC_CTYPE=C.UTF-8
+MISE_SHELL=bash
+MIX_ARCHIVES=/root/.local/share/mise/installs/elixir/1.18.3-otp-27/.mix/archives
+MIX_HOME=/root/.local/share/mise/installs/elixir/1.18.3-otp-27/.mix
+NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/envoy-mitmproxy-ca-cert.crt
+NO_COLOR=1
+NO_PROXY=browser
+NVM_BIN=/root/.nvm/versions/node/v22.21.1/bin
+NVM_CD_FLAGS=
+NVM_DIR=/root/.nvm
+NVM_INC=/root/.nvm/versions/node/v22.21.1/include/node
+PAGER=cat
+PATH=/root/.phpenv/shims:/root/.cargo/bin:/root/.nvm/versions/node/v22.21.1/bin:/root/.pyenv/shims:/root/.pyenv/bin:/root/.local/share/mise/installs/bun/1.2.14/bin:/root/.local/share/mise/installs/erlang/27.1.2/bin:/root/.local/share/mise/installs/go/1.25.1/bin:/root/.local/share/mise/installs/golangci-lint/2.1.6/golangci-lint-2.1.6-linux-amd64:/root/.local/share/mise/installs/gradle/8.14.3/gradle-8.14.3/bin:/root/.local/share/mise/installs/java/25.0.1/bin:/root/.local/share/mise/installs/maven/3.9.10/apache-maven-3.9.10/bin:/root/.local/share/mise/installs/ruby/3.2.3/bin:/root/.local/share/mise/installs/elixir/1.18.3-otp-27/bin:/root/.local/share/mise/installs/elixir/1.18.3-otp-27/.mix/escripts:/opt/codex/tmp/path/codex-arg0Hc2Pxr:/root/.phpenv/bin:/root/.phpenv/shims:/usr/local/go/bin:/root/go/bin:/root/.swiftly/bin:/root/.local/bin:/root/.pyenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+PHPENV_ROOT=/root/.phpenv
+PIPX_BIN_DIR=/root/.local/bin
+PIP_CERT=/usr/local/share/ca-certificates/envoy-mitmproxy-ca-cert.crt
+PWD=/workspace/myStarterKit
+PYENV_ROOT=/root/.pyenv
+PYENV_SHELL=bash
+REQUESTS_CA_BUNDLE=/usr/local/share/ca-certificates/envoy-mitmproxy-ca-cert.crt
+SHLVL=1
+SSL_CERT_FILE=/usr/local/share/ca-certificates/envoy-mitmproxy-ca-cert.crt
+SWIFTLY_BIN_DIR=/root/.swiftly/bin
+SWIFTLY_HOME_DIR=/root/.local/share/swiftly
+SWIFTLY_TOOLCHAINS_DIR=/root/.local/share/swiftly/toolchains
+TERM=dumb
+UV_NO_PROGRESS=1
+YARN_HTTPS_PROXY=http://proxy:8080
+YARN_HTTP_PROXY=http://proxy:8080
+_=/usr/bin/env
+__MISE_DIFF=eAFqXpyfk9KwOC+1vHWpu7+Tp99NPf2i/PwSfb2c/OTEHP3ijMSiVP3czOJU/cy84pLEnJxi/fR8fUM9I1M9Q/2kzLxl7v5B/v4hN7WI17bSyzHMMd7D39f1pg5BXVmJZYn6RqZ6BnqGa3w9I+Idg5w9PMNcg286E9SampNZkVmkb6hnaKFnrJtfUqBrZK6vl5tZoZ9YlJyRWZZavAJkItghVuSbtqQgsSRj1k19giYkleaBAk7P0AQUcDeNCGpILcpJzEvXNzLXM9QzAushMXJuhhC0Iz0fZEdypm5OZl6JvpGeoZ6ZPoqYLlgMJF1aoZuYm2JmctOBsKlFiSk5qfoWeoYmesb66WCeLpSXlJl304CgCUjxDhjY564EdeQmlqXm6RvrWeoZGugnFiQmZ6TqgsV0oWIgiwnHUlFpUqW+sZ6RnjHYXkuC9mJNZiC7KEmhqcXJRZkFJcUACU9ILg
+__MISE_ORIG_PATH=/opt/codex/tmp/path/codex-arg0Hc2Pxr:/root/.phpenv/bin:/root/.phpenv/shims:/usr/local/go/bin:/root/go/bin:/root/.swiftly/bin:/root/.local/bin:/root/.pyenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+__MISE_SESSION=eAHqWJOTn5iSmhJfkp+fUzxhHZSXnJ+XlplePHGfflF+fom+HoSvn5tZnKoPYeuV5OfmrIGw4wsSSzKKJyxOzStrXeru7+Tpd1MPqjEnPzkxR784I7EoFaI7M6+4JDEnp1g/PV/fUM/IVM9QPykzb5m7f5C/f8hNLeK1rfRyDHOM9/D3db2pQ1AXYFmJZYn6RqZ6BnqGa3w9I+Idg5w9PMNcg286E9SampNZkVmkb6hnaKFnrJtfUqBrZK6vl5tZoZ9YlJyRWZZavAJkItghVuSbtjwxJzOxOLW4YXFKZtF2/fL8ouzigsTkVP3cyuCSxKKS1CLvzJI1qXll8WWJRfEZicUZG5KMLQ1T00wNkswNkw1NLczW5iSWpBaXxJcWpCSWpB4RYIADxjmvl+jLAAAAobNF
+http_proxy=http://proxy:8080
+https_proxy=http://proxy:8080
+no_proxy=localhost,127.0.0.1,::1
+npm_config_http_proxy=http://proxy:8080
+npm_config_https_proxy=http://proxy:8080
